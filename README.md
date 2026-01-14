@@ -1,7 +1,7 @@
 # Custom Pic Plugin - 智能多模型图片生成插件
 
 > **修改版说明**：本仓库为原版插件的修改版，由 nguspring 维护。
-> - 原版仓库：https://github.com/1021143806/custom_pic_plugin
+> - 原版仓库：https://github.com/nguspring/custom_pic_plugin
 > - 修改版版本：v3.4.1
 > - 修改说明：详见 [新功能添加说明.md](新功能添加说明.md)
 >
@@ -94,7 +94,7 @@
 
 ### 1. 安装插件
   - 进入 `MaiBot/plugins` 目录
-  - 克隆仓库：`git clone https://github.com/1021143806/custom_pic_plugin`
+  - 克隆仓库：`git clone https://github.com/nguspring/custom_pic_plugin`
   - 重启 MaiBot，插件会自动生成 `config.toml`
 
 ### 2. 配置模型
