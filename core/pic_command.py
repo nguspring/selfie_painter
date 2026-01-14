@@ -1121,8 +1121,24 @@ class PicConfigCommand(BaseCommand):
         """检查用户权限"""
         try:
             admin_users = self.get_config("components.admin_users", [])
-            user_id = str(self.message.message_info.user_info.user_id) if self.message and self.message.message_info and self.message.message_info.user_info else None
-            return user_id in admin_users
+            
+            # Pylance fix: Ensure admin_users is a list
+            if not isinstance(admin_users, list):
+                return False
+
+            user_id: Optional[str] = None
+            if self.message and self.message.message_info and self.message.message_info.user_info:
+                # Safe access to user_id
+                raw_uid = getattr(self.message.message_info.user_info, "user_id", None)
+                if raw_uid is not None:
+                    user_id = str(raw_uid)
+            
+            # Pylance fix: Ensure user_id is not None
+            if user_id is None:
+                return False
+                
+            # Convert config IDs to strings for robust comparison
+            return user_id in [str(u) for u in admin_users]
         except Exception:
             return False
 
