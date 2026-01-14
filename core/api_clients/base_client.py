@@ -106,8 +106,8 @@ class BaseApiClient:
         prompt: str,
         model_config: Dict[str, Any],
         size: str,
-        strength: float = None,
-        input_image_base64: str = None,
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None,
         max_retries: int = 2
     ) -> Tuple[bool, str]:
         """生成图片的基础方法，带重试逻辑

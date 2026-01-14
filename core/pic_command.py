@@ -1337,7 +1337,11 @@ class PicStyleCommand(BaseCommand):
             # 显式使用 Any 类型注解绕过 Pylance 对未知类型的推断限制
             admin_users_str: list[str] = [str(uid) for uid in raw_admin_users]  # type: ignore
             
-            return user_id in admin_users_str
+            # 使用列表成员检查，Pylance可能会对Optional[str] in list[str]报错
+            # 但我们在上面已经检查了user_id is not None
+            if user_id is not None:
+                return user_id in admin_users_str
+            return False
         except Exception:
             return False
 

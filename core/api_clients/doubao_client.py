@@ -21,7 +21,7 @@ class DoubaoClient(BaseApiClient):
         try:
             # 尝试导入豆包SDK
             try:
-                from volcenginesdkarkruntime import Ark
+                from volcenginesdkarkruntime import Ark  # type: ignore
             except ImportError:
                 logger.error(f"{self.log_prefix} (Doubao) 缺少volcenginesdkarkruntime库，请安装: pip install 'volcengine-python-sdk[ark]'")
                 return False, "缺少豆包SDK，请安装volcengine-python-sdk[ark]"
