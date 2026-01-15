@@ -572,7 +572,7 @@ class CustomPicPlugin(BasePlugin):
             "enable_llm_scene": ConfigField(
                 type=bool,
                 default=False,
-                description="是否启用 LLM 智能场景判断。开启后，Interval 模式会根据当前时间让 LLM 构思合适的自拍场景（地点、动作、着装），不再单纯随机。",
+                description="【仅限Interval模式】开启后，发自拍前会让LLM根据当前时间（如'周一上午10点'）构思一个合适的场景（如'办公室喝咖啡'）。关闭则使用默认场景。",
                 depends_on="auto_selfie.enabled",
                 depends_value=True,
                 order=14
@@ -581,7 +581,7 @@ class CustomPicPlugin(BasePlugin):
             "scene_llm_model": ConfigField(
                 type=str,
                 default="",
-                description="用于智能场景判断的 LLM 模型 ID。留空则使用系统默认模型。",
+                description="构思自拍场景时使用的LLM模型。此处填写MaiBot主配置中的模型ID（如model1），留空则使用系统默认模型。注意：这里是指MaiBot的文本模型，不是绘图模型。",
                 placeholder="model1",
                 depends_on="auto_selfie.enable_llm_scene",
                 depends_value=True,
@@ -591,7 +591,7 @@ class CustomPicPlugin(BasePlugin):
             "time_scenes": ConfigField(
                 type=list,
                 default=["08:00|morning coffee, cafe, sunlight", "23:00|pajamas, bed, sleepy, night light"],
-                description="指定时间点的自定义场景。格式：'HH:MM|场景描述'。仅在 schedule_mode='times' 时生效，优先于随机场景。",
+                description="【仅限Times模式】为每个时间点指定自拍场景。格式：'HH:MM|英文场景描述'。例如 '08:00|bedroom, pajamas, morning' 表示8点发的自拍用卧室睡衣早晨的场景。未配置的时间点使用默认场景。",
                 placeholder="[\"08:00|morning coffee\", \"22:00|reading book\"]",
                 depends_on="auto_selfie.schedule_mode",
                 depends_value="times",
@@ -601,7 +601,7 @@ class CustomPicPlugin(BasePlugin):
             "ask_model_id": ConfigField(
                 type=str,
                 default="",
-                description="用于生成自拍询问语的模型 ID。留空则使用系统默认模型。",
+                description="发送自拍后附带的那句话（如'你看这张怎么样？'）由哪个LLM模型生成。此处填写MaiBot主配置中的模型ID（如model1），留空则使用系统默认模型。注意：这里是指MaiBot的文本模型，不是绘图模型。",
                 placeholder="model1",
                 depends_on="auto_selfie.use_replyer_for_ask",
                 depends_value=True,
