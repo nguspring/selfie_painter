@@ -69,7 +69,7 @@ class CustomPicPlugin(BasePlugin):
         ),
         "auto_selfie": ConfigSection(
             title="定时自拍配置",
-            description="Bot会根据设定的时间间隔自动发送自拍",
+            description="Bot会根据设定的时间间隔自动发送自拍。v3.5.0新增日常叙事系统和hybrid混合模式",
             icon="clock",
             order=7
         ),
@@ -175,7 +175,7 @@ class CustomPicPlugin(BasePlugin):
             ),
             "config_version": ConfigField(
                 type=str,
-                default="3.4.2",
+                default="3.5.0",
                 description="插件配置版本号",
                 disabled=True,
                 order=2
@@ -464,8 +464,8 @@ class CustomPicPlugin(BasePlugin):
             "schedule_mode": ConfigField(
                 type=str,
                 default="interval",
-                description="调度模式。interval=倒计时模式（每隔N分钟），times=指定时间点模式（每天固定时间）",
-                choices=["interval", "times"],
+                description="调度模式。interval=倒计时模式，times=指定时间点模式，hybrid=混合模式（times为主线+interval为补充）",
+                choices=["interval", "times", "hybrid"],
                 depends_on="auto_selfie.enabled",
                 depends_value=True,
                 order=2
@@ -606,6 +606,74 @@ class CustomPicPlugin(BasePlugin):
                 depends_on="auto_selfie.use_replyer_for_ask",
                 depends_value=True,
                 order=17
+            ),
+            # [新增] Hybrid 模式配置
+            "interval_probability": ConfigField(
+                type=float,
+                default=0.3,
+                description="【仅限Hybrid模式】在非times时间点时，interval补充触发的概率（0.0-1.0）。设为0则hybrid模式等同于纯times模式",
+                min=0.0,
+                max=1.0,
+                step=0.1,
+                depends_on="auto_selfie.schedule_mode",
+                depends_value="hybrid",
+                order=18
+            ),
+            # [新增] 叙事系统配置
+            "enable_narrative": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用日常叙事系统。开启后，每天的自拍会形成连贯的故事线（早起→午餐→下班→晚间），配文会有承上启下感",
+                depends_on="auto_selfie.enabled",
+                depends_value=True,
+                order=19
+            ),
+            "narrative_script": ConfigField(
+                type=str,
+                default="auto",
+                description="叙事剧本选择。auto=自动选择（工作日用default，周末用weekend），default=默认剧本，weekend=周末剧本",
+                choices=["auto", "default", "weekend"],
+                depends_on="auto_selfie.enable_narrative",
+                depends_value=True,
+                order=20
+            ),
+            "narrative_context_length": ConfigField(
+                type=int,
+                default=5,
+                description="叙事上下文保留条数。用于生成有连贯感的配文时参考最近多少条记录",
+                min=1,
+                max=20,
+                depends_on="auto_selfie.enable_narrative",
+                depends_value=True,
+                order=21
+            ),
+            # [新增] 配文类型配置
+            "caption_types": ConfigField(
+                type=list,
+                default=["narrative", "ask", "share", "monologue", "none"],
+                description="启用的配文类型列表。narrative=叙事式，ask=询问式，share=分享式，monologue=独白式，none=无配文",
+                placeholder='["narrative", "ask", "share", "monologue", "none"]',
+                depends_on="auto_selfie.enable_narrative",
+                depends_value=True,
+                order=22
+            ),
+            "caption_weights": ConfigField(
+                type=list,
+                default=[0.35, 0.25, 0.25, 0.10, 0.05],
+                description="配文类型权重列表，与caption_types对应。所有权重之和应为1.0",
+                placeholder="[0.35, 0.25, 0.25, 0.10, 0.05]",
+                depends_on="auto_selfie.enable_narrative",
+                depends_value=True,
+                order=23
+            ),
+            "caption_model_id": ConfigField(
+                type=str,
+                default="",
+                description="配文生成使用的LLM模型ID。此处填写MaiBot主配置中的模型ID，留空则使用系统默认模型",
+                placeholder="model1",
+                depends_on="auto_selfie.enable_narrative",
+                depends_value=True,
+                order=24
             )
         },
         "prompt_optimizer": {
