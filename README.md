@@ -2,12 +2,12 @@
 
 > **修改版说明**：本仓库为原版插件的修改版，由 nguspring 维护。
 > - 原版仓库：https://github.com/nguspring/custom_pic_plugin
-> - 修改版版本：v3.5.0
+> - 修改版版本：v3.5.2
 > - 修改说明：详见 [新功能添加说明.md](新功能添加说明.md)
 >
 > **修改版定位**：本修改版专注于**定时发送自拍**功能，让Bot更像真人；同时主要对**魔搭模型**进行优化，内置7个精选魔搭模型预设配置，提供开箱即用的体验。
 
-基于 Maibot 插件的智能多模型图片生成插件，支持文生图和图生图自动识别。兼容OpenAI、豆包、Gemini、魔搭等多种API格式。提供命令式风格转换、模型配置管理、结果缓存等功能。**v3.5.0 统一使用智能日程模式(Smart Mode)：通过 LLM 动态生成每日日程，实现最自然的"真人感"自拍体验。**
+基于 Maibot 插件的智能多模型图片生成插件，支持文生图和图生图自动识别。兼容OpenAI、豆包、Gemini、魔搭等多种API格式。提供命令式风格转换、模型配置管理、结果缓存等功能。**v3.5.2 统一使用智能日程模式(Smart Mode)：通过 LLM 动态生成每日日程+场景触发，人物动作完全由场景决定，实现最自然的"真人感"自拍体验。**
 
 魔搭 api 的优点是调用免费，AI 绘图本身配置需求并不是很高，但是平台收费又都比较贵，魔搭社区有按天计算的免费调用限额，对应麦麦的绘图需求来说完全足够。如果想接其他风格绘图的可以使用豆包和 GPT 模型。
 
@@ -119,14 +119,14 @@ character_persona = "一个可爱活泼的二次元女孩，喜欢美食和逛�
 
 ### 配置项详解
 
-#### 智能日程模式配置 (`[auto_selfie]` 节) - v3.5.0 新增
+#### 智能日程模式配置 (`[auto_selfie]` 节) - v3.5.2
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `schedule_mode` | string | "smart" | 调度模式：`smart`（推荐），其他模式已自动升级/废弃 |
-| `character_name` | string | "麦麦" | 角色名称（用于日程生成） |
-| `character_persona` | string | "" | 角色人设描述（如"一个可爱活泼的二次元女孩"） |
-| `schedule_weather` | string | "晴天" | 天气设定（影响场景生成） |
+| `schedule_mode` | string | "smart" | 调度模式：`smart`（推荐），其他模式（interval/times/hybrid）会自动升级为smart |
+| `schedule_generator_model` | string | "" | 日程生成使用的LLM模型ID，留空则使用MaiBot的replyer模型 |
+| `schedule_min_entries` | int | 4 | 每天最少生成多少条日程 |
+| `schedule_max_entries` | int | 8 | 每天最多生成多少条日程 |
 
 #### 日常叙事线配置 (`[auto_selfie]` 节)：
 - `enable_narrative`: 是否启用叙事系统（默认true）
@@ -317,6 +317,26 @@ Smart 模式引入了以下新的核心模块：
 **我的期望**：希望通过统一 TTS 语音合成插件、修改版 custom_pic_plugin 插件、A_MIND 插件、Mai_Only_You 插件这四个插件，塑造出一个真实的麦麦来陪伴用户。让麦麦不仅能用声音与用户交流，还能主动分享自己的生活照片，拥有自己的记忆和情感，成为一个真正有温度的数字伙伴。
 
 ## 📝 更新日志
+
+### v3.5.2 (修改版)
+
+**🔧 配置 Schema 更新**
+
+本版本更新了配置 schema，使默认配置直接使用 Smart 模式，并清理了旧模式配置项。
+
+**配置变更：**
+- 🔧 **schedule_mode 默认值改为 smart**：新用户默认使用智能日程模式
+- 🆕 **新增 schedule_generator_model**：日程生成使用的 LLM 模型配置
+- 🆕 **新增 schedule_min_entries/schedule_max_entries**：控制每天日程条目数量（默认4-8条）
+- ⚠️ **旧模式配置标记为已废弃**：enable_llm_scene、time_scenes、interval_probability 等配置项标记为【已废弃】
+- 📝 **配置描述优化**：更新描述说明 smart 是唯一推荐模式
+
+**向后兼容：**
+- ✅ 保留 interval/times/hybrid 模式选项（用于兼容旧配置）
+- ✅ 旧模式会在运行时自动升级为 smart 模式
+- ✅ 用户无需修改配置，系统会自动处理
+
+---
 
 ### v3.5.0 (修改版)
 
