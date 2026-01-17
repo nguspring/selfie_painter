@@ -147,8 +147,12 @@ class CaptionGenerator:
         1. 如果场景指定了配文类型，优先使用
         2. 否则根据时间段权重随机选择
         """
+        logger.info(f"[DEBUG-叙事] select_caption_type() 被调用")
+        logger.info(f"[DEBUG-叙事] 参数 - scene: {scene.scene_id if scene else 'None'}, context长度: {len(narrative_context)}, hour: {current_hour}")
+        
         # 如果场景指定了配文类型，优先使用
         if scene is not None:
+            logger.info(f"[DEBUG-叙事] 使用场景指定的配文类型: {scene.caption_type.value}")
             logger.debug(f"使用场景指定的配文类型: {scene.caption_type.value}")
             return scene.caption_type
 
@@ -159,12 +163,15 @@ class CaptionGenerator:
         # 根据时间段获取权重配置
         weight_config = CaptionWeightConfig.for_time_period(current_hour)
         weights = weight_config.get_weights_list()
+        logger.info(f"[DEBUG-叙事] 时间段权重配置 (hour={current_hour}): {weights}")
 
         # 获取所有配文类型（按枚举顺序）
         caption_types = list(CaptionType)
+        logger.debug(f"[DEBUG-叙事] 可选配文类型: {[t.value for t in caption_types]}")
 
         # 随机选择
         selected_type = random.choices(caption_types, weights=weights, k=1)[0]
+        logger.info(f"[DEBUG-叙事] 随机选择的配文类型: {selected_type.value}")
         logger.debug(
             f"根据时间段 {current_hour}:00 权重选择配文类型: {selected_type.value}"
         )
@@ -193,8 +200,13 @@ class CaptionGenerator:
         Returns:
             生成的配文，如果类型是 NONE 则返回空字符串
         """
+        logger.info(f"[DEBUG-叙事] generate_caption() 被调用")
+        logger.info(f"[DEBUG-叙事] 参数 - type: {caption_type.value}, scene: {scene_description}, mood: {mood}")
+        logger.info(f"[DEBUG-叙事] 参数 - context长度: {len(narrative_context)}, image_prompt: {image_prompt[:50] if image_prompt else 'None'}...")
+        
         # 如果是无配文类型，直接返回空字符串
         if caption_type == CaptionType.NONE:
+            logger.info("[DEBUG-叙事] 配文类型为 NONE，返回空字符串")
             logger.debug("配文类型为 NONE，返回空字符串")
             return ""
 
@@ -204,6 +216,7 @@ class CaptionGenerator:
 
         try:
             # 根据类型调用对应的生成方法
+            logger.info(f"[DEBUG-叙事] 调用 _{caption_type.value} 配文生成方法...")
             if caption_type == CaptionType.NARRATIVE:
                 caption = await self._generate_narrative_caption(
                     scene_description, narrative_context, mood
@@ -215,20 +228,29 @@ class CaptionGenerator:
             elif caption_type == CaptionType.MONOLOGUE:
                 caption = await self._generate_monologue_caption(mood)
             else:
+                logger.warning(f"[DEBUG-叙事] 未知的配文类型: {caption_type}")
                 logger.warning(f"未知的配文类型: {caption_type}")
                 caption = ""
 
             # 如果生成失败，使用备用配文
             if not caption:
+                logger.warning("[DEBUG-叙事] 配文生成返回空，使用备用配文")
                 logger.warning("配文生成失败，使用备用配文")
                 caption = self._get_fallback_caption(caption_type)
+                logger.info(f"[DEBUG-叙事] 备用配文: {caption}")
 
+            logger.info(f"[DEBUG-叙事] 配文生成完成: {caption}")
             logger.info(f"配文生成完成: {caption}")
             return caption
 
         except Exception as e:
+            import traceback
+            logger.error(f"[DEBUG-叙事] 配文生成异常: {e}")
+            logger.error(f"[DEBUG-叙事] 异常堆栈: {traceback.format_exc()}")
             logger.error(f"配文生成异常: {e}")
-            return self._get_fallback_caption(caption_type)
+            fallback = self._get_fallback_caption(caption_type)
+            logger.info(f"[DEBUG-叙事] 异常回退配文: {fallback}")
+            return fallback
 
     # ==================== 各类型专用生成方法 ====================
 
@@ -347,15 +369,20 @@ class CaptionGenerator:
         from src.llm_models.utils_model import LLMRequest
         from src.config.config import model_config as maibot_model_config
 
+        logger.info(f"[DEBUG-叙事] _call_llm() 被调用，prompt长度: {len(prompt)}")
+
         try:
             # 获取用户配置的自定义模型 ID
             custom_model_id = self.plugin.get_config("auto_selfie.caption_model_id", "")
+            logger.info(f"[DEBUG-叙事] 配置的自定义模型ID: '{custom_model_id}'")
             
             # 如果用户配置了自定义模型，尝试使用
             if custom_model_id:
                 available_models = llm_api.get_available_models()
+                logger.info(f"[DEBUG-叙事] 可用模型列表: {list(available_models.keys()) if available_models else '无'}")
                 if custom_model_id in available_models:
                     model_config = available_models[custom_model_id]
+                    logger.info(f"[DEBUG-叙事] 使用用户配置的模型: {custom_model_id}")
                     logger.debug(f"使用用户配置的模型: {custom_model_id}")
                     
                     # 调用 LLM 生成
@@ -364,47 +391,61 @@ class CaptionGenerator:
                         model_config=model_config,
                         request_type="plugin.auto_selfie.caption_generate",
                         temperature=0.8,
-                        max_tokens=100,
+                        max_tokens=9999,
                     )
                     
+                    logger.info(f"[DEBUG-叙事] LLM调用结果: success={success}, content长度={len(content) if content else 0}")
                     if success and content:
+                        logger.info(f"[DEBUG-叙事] LLM 生成成功，使用模型: {model_name}")
                         logger.debug(f"LLM 生成成功，使用模型: {model_name}")
                         return self._clean_caption(content)
                     else:
+                        logger.warning(f"[DEBUG-叙事] LLM 生成失败: {content}")
                         logger.warning(f"LLM 生成失败: {content}")
                         return ""
                 else:
+                    logger.warning(f"[DEBUG-叙事] 配置的模型 '{custom_model_id}' 不存在，回退到默认 replyer 模型")
                     logger.warning(f"配置的模型 '{custom_model_id}' 不存在，回退到默认 replyer 模型")
             
             # 默认使用 MaiBot 的 replyer 模型（回复模型）
             # 这样配文风格与麦麦的回复保持一致
+            logger.info("[DEBUG-叙事] 尝试使用 MaiBot replyer 模型")
             try:
                 replyer_request = LLMRequest(
                     model_set=maibot_model_config.model_task_config.replyer,
                     request_type="plugin.auto_selfie.caption_generate"
                 )
+                logger.info("[DEBUG-叙事] LLMRequest 创建成功，调用 generate_response_async...")
                 
                 content, reasoning = await replyer_request.generate_response_async(
                     prompt,
                     temperature=0.8,
-                    max_tokens=100
+                    max_tokens=9999
                 )
                 
+                logger.info(f"[DEBUG-叙事] replyer模型返回: content长度={len(content) if content else 0}")
                 if content:
+                    logger.info("[DEBUG-叙事] LLM 生成成功，使用 MaiBot replyer 模型")
                     logger.debug("LLM 生成成功，使用 MaiBot replyer 模型")
                     return self._clean_caption(content)
                 else:
+                    logger.warning("[DEBUG-叙事] replyer 模型生成失败，返回空内容")
                     logger.warning("replyer 模型生成失败，返回空内容")
                     return ""
                     
             except Exception as e:
+                import traceback
+                logger.warning(f"[DEBUG-叙事] 使用 replyer 模型失败: {e}")
+                logger.warning(f"[DEBUG-叙事] replyer失败堆栈: {traceback.format_exc()}")
                 logger.warning(f"使用 replyer 模型失败: {e}，尝试使用 llm_api 备用方案")
                 
                 # 备用方案：使用 llm_api 的第一个可用模型
                 available_models = llm_api.get_available_models()
+                logger.info(f"[DEBUG-叙事] 备用方案 - 可用模型: {list(available_models.keys()) if available_models else '无'}")
                 if available_models:
                     first_key = next(iter(available_models))
                     model_config = available_models[first_key]
+                    logger.info(f"[DEBUG-叙事] 使用备用模型: {first_key}")
                     logger.debug(f"使用备用模型: {first_key}")
                     
                     success, content, reasoning, model_name = await llm_api.generate_with_model(
@@ -412,15 +453,21 @@ class CaptionGenerator:
                         model_config=model_config,
                         request_type="plugin.auto_selfie.caption_generate",
                         temperature=0.8,
-                        max_tokens=100,
+                        max_tokens=9999,
                     )
                     
+                    logger.info(f"[DEBUG-叙事] 备用模型调用结果: success={success}, content长度={len(content) if content else 0}")
                     if success and content:
                         return self._clean_caption(content)
+                else:
+                    logger.warning("[DEBUG-叙事] 没有可用的备用模型")
                 
                 return ""
 
         except Exception as e:
+            import traceback
+            logger.error(f"[DEBUG-叙事] LLM 调用异常: {e}")
+            logger.error(f"[DEBUG-叙事] 异常堆栈: {traceback.format_exc()}")
             logger.error(f"LLM 调用异常: {e}")
             return ""
 

@@ -240,12 +240,15 @@ class CaptionWeightConfig:
 
 
 # 默认日常剧本定义
+# 注意：时间范围已优化，消除了重叠问题
+# 匹配常用的 schedule_times: ['08:00', '12:00', '16:00', '19:00']
 DEFAULT_NARRATIVE_SCRIPTS: Dict[str, List[NarrativeScene]] = {
     "default": [
+        # 早晨场景 - 匹配 08:00
         NarrativeScene(
             scene_id="morning_wakeup",
-            time_start="07:00",
-            time_end="09:00",
+            time_start="06:30",
+            time_end="08:30",
             description="刚睡醒",
             image_prompt="bedroom, pajamas, sleepy, morning light, just woke up, messy hair",
             caption_type=CaptionType.NARRATIVE,
@@ -253,7 +256,7 @@ DEFAULT_NARRATIVE_SCRIPTS: Dict[str, List[NarrativeScene]] = {
         ),
         NarrativeScene(
             scene_id="morning_breakfast",
-            time_start="08:00",
+            time_start="08:30",
             time_end="10:00",
             description="吃早餐",
             image_prompt="kitchen, breakfast, coffee, toast, morning, cozy",
@@ -262,62 +265,56 @@ DEFAULT_NARRATIVE_SCRIPTS: Dict[str, List[NarrativeScene]] = {
         ),
         NarrativeScene(
             scene_id="morning_ready",
-            time_start="09:00",
-            time_end="11:00",
+            time_start="10:00",
+            time_end="11:30",
             description="准备出门",
             image_prompt="mirror, getting ready, outfit, makeup, natural light",
             caption_type=CaptionType.ASK,
             prev_scene_ids=["morning_wakeup", "morning_breakfast"],
         ),
+        # 午间场景 - 匹配 12:00
         NarrativeScene(
-            scene_id="noon_work",
-            time_start="10:00",
-            time_end="12:00",
-            description="工作/学习中",
-            image_prompt="desk, computer, books, study, working, focused",
+            scene_id="lunch_time",
+            time_start="11:30",
+            time_end="13:00",
+            description="午餐时间",
+            image_prompt="restaurant, lunch, food, eating, happy",
             caption_type=CaptionType.SHARE,
             prev_scene_ids=["morning_ready"],
         ),
         NarrativeScene(
-            scene_id="lunch_time",
-            time_start="11:30",
-            time_end="13:30",
-            description="午餐时间",
-            image_prompt="restaurant, lunch, food, eating, happy",
-            caption_type=CaptionType.SHARE,
-            prev_scene_ids=["noon_work"],
-        ),
-        NarrativeScene(
-            scene_id="afternoon_break",
-            time_start="14:00",
-            time_end="16:00",
-            description="下午休息",
+            scene_id="afternoon_rest",
+            time_start="13:00",
+            time_end="15:00",
+            description="午后小憩",
             image_prompt="cafe, relaxing, tea, afternoon, window light",
             caption_type=CaptionType.MONOLOGUE,
             prev_scene_ids=["lunch_time"],
         ),
+        # 下午场景 - 匹配 16:00
         NarrativeScene(
             scene_id="afternoon_activity",
             time_start="15:00",
-            time_end="18:00",
+            time_end="17:30",
             description="下午活动",
             image_prompt="outdoor, walking, park, sunshine, casual",
             caption_type=CaptionType.SHARE,
-            prev_scene_ids=["afternoon_break"],
+            prev_scene_ids=["afternoon_rest"],
         ),
         NarrativeScene(
             scene_id="evening_dinner",
-            time_start="18:00",
-            time_end="20:00",
+            time_start="17:30",
+            time_end="19:00",
             description="晚餐时间",
             image_prompt="dinner, home cooking, warm light, evening",
             caption_type=CaptionType.SHARE,
             prev_scene_ids=["afternoon_activity"],
         ),
+        # 晚间场景 - 匹配 19:00
         NarrativeScene(
             scene_id="evening_relax",
-            time_start="19:30",
-            time_end="22:00",
+            time_start="19:00",
+            time_end="21:30",
             description="晚间放松",
             image_prompt="living room, couch, relaxing, tv, cozy evening",
             caption_type=CaptionType.MONOLOGUE,
@@ -325,8 +322,8 @@ DEFAULT_NARRATIVE_SCRIPTS: Dict[str, List[NarrativeScene]] = {
         ),
         NarrativeScene(
             scene_id="night_routine",
-            time_start="21:00",
-            time_end="23:30",
+            time_start="21:30",
+            time_end="23:00",
             description="睡前准备",
             image_prompt="bedroom, skincare, night routine, soft light, peaceful",
             caption_type=CaptionType.NARRATIVE,
@@ -334,8 +331,8 @@ DEFAULT_NARRATIVE_SCRIPTS: Dict[str, List[NarrativeScene]] = {
         ),
         NarrativeScene(
             scene_id="night_sleep",
-            time_start="22:30",
-            time_end="00:30",
+            time_start="23:00",
+            time_end="01:00",
             description="准备睡觉",
             image_prompt="bed, night, sleepy, dimmed light, goodnight",
             caption_type=CaptionType.NARRATIVE,
@@ -343,33 +340,37 @@ DEFAULT_NARRATIVE_SCRIPTS: Dict[str, List[NarrativeScene]] = {
         ),
     ],
     "weekend": [
+        # 周末早晨 - 匹配 08:00（用户要求 07:00-11:00）
         NarrativeScene(
             scene_id="weekend_morning",
-            time_start="09:00",
+            time_start="07:00",
             time_end="11:00",
             description="周末懒觉",
             image_prompt="bedroom, lazy morning, weekend, sleeping in, cozy",
             caption_type=CaptionType.NARRATIVE,
             prev_scene_ids=None,
         ),
+        # 周末早午餐 - 匹配 12:00（消除与早晨的重叠）
         NarrativeScene(
             scene_id="weekend_brunch",
-            time_start="10:30",
-            time_end="13:00",
+            time_start="11:00",
+            time_end="13:30",
             description="周末早午餐",
             image_prompt="brunch, pancakes, coffee, weekend vibes, relaxed",
             caption_type=CaptionType.SHARE,
             prev_scene_ids=["weekend_morning"],
         ),
+        # 周末外出 - 匹配 16:00
         NarrativeScene(
             scene_id="weekend_outing",
-            time_start="13:00",
+            time_start="13:30",
             time_end="18:00",
             description="周末外出",
             image_prompt="outdoor, shopping, friends, weekend fun, city",
             caption_type=CaptionType.SHARE,
             prev_scene_ids=["weekend_brunch"],
         ),
+        # 周末晚间 - 匹配 19:00
         NarrativeScene(
             scene_id="weekend_evening",
             time_start="18:00",

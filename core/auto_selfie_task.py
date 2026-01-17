@@ -62,6 +62,10 @@ class AutoSelfieTask(AsyncTask):
         self.plugin = plugin_instance
         self.last_send_time: Dict[str, float] = {}  # interval模式: 记录每个群/用户的上次发送时间戳
         self.last_send_dates: Dict[str, Dict[str, str]] = {} # times模式: 记录每个群/用户每个时间点的最后发送日期 {"stream_id": {"08:00": "2024-01-13"}}
+        
+        # DEBUG日志频率控制 (5分钟一次)
+        self._last_debug_log_time: float = 0
+        self._debug_log_interval: int = 300  # 5分钟 = 300秒
 
         # 加载状态
         self._load_state()
@@ -72,11 +76,16 @@ class AutoSelfieTask(AsyncTask):
         try:
             current_dir = os.path.dirname(os.path.abspath(__file__))
             narrative_state_path = os.path.join(os.path.dirname(current_dir), "narrative_state.json")
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] 正在初始化叙事管理器，状态文件路径: {narrative_state_path}")
             self.narrative_manager = NarrativeManager(plugin_instance, narrative_state_path)
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] 叙事管理器初始化成功，当前剧本: {self.narrative_manager.current_script_id}")
             self.caption_generator = CaptionGenerator(plugin_instance)
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] 配文生成器初始化成功")
             logger.info(f"{self.log_prefix} 叙事管理器和配文生成器初始化成功")
         except Exception as e:
+            import traceback
             logger.warning(f"{self.log_prefix} 叙事模块初始化失败，将使用传统配文方式: {e}")
+            logger.warning(f"{self.log_prefix} [DEBUG-叙事] 初始化失败堆栈: {traceback.format_exc()}")
 
         # 检查全局任务中止标志（仅作检查，修复逻辑在plugin.py中）
         from src.manager.async_task_manager import async_task_manager
@@ -447,6 +456,31 @@ class AutoSelfieTask(AsyncTask):
         stream_id = stream.stream_id
         current_hm = current_time_obj.strftime("%H:%M")
         
+        # [DEBUG-叙事] 记录 hybrid 模式入口信息 (频率控制: 每5分钟一次)
+        current_ts = current_timestamp
+        should_log_debug = (current_ts - self._last_debug_log_time) >= self._debug_log_interval
+        
+        if should_log_debug:
+            self._last_debug_log_time = current_ts
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] === Hybrid模式检查开始 (每5分钟记录一次) ===")
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] 流ID: {stream_id}, 当前时间: {current_hm}, 日期: {current_date_str}")
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] 目标时间点: {target_times}")
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] NarrativeManager状态: {'已初始化' if self.narrative_manager is not None else '未初始化'}")
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] CaptionGenerator状态: {'已初始化' if self.caption_generator is not None else '未初始化'}")
+            
+            # 如果叙事管理器已初始化，输出更多状态信息
+            if self.narrative_manager is not None:
+                try:
+                    state = self.narrative_manager.state
+                    if state:
+                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 叙事状态 - 日期: {state.date}, 剧本: {state.script_id}")
+                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 叙事状态 - 已完成场景: {state.completed_scenes}")
+                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 叙事状态 - 当前情绪: {state.current_mood}")
+                    else:
+                        logger.warning(f"{self.log_prefix} [DEBUG-叙事] 叙事状态为 None")
+                except Exception as e:
+                    logger.warning(f"{self.log_prefix} [DEBUG-叙事] 读取叙事状态失败: {e}")
+        
         # 步骤1: 检查是否有 times 模式的时间点需要触发
         times_triggered = await self._check_times_trigger(
             stream=stream,
@@ -572,14 +606,25 @@ class AutoSelfieTask(AsyncTask):
                         logger.info(f"{self.log_prefix} 使用自定义时间场景: {t_str} -> {scene_description}")
                     else:
                         # 尝试使用叙事管理器获取场景
+                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 尝试从叙事管理器获取场景...")
                         if self.narrative_manager is not None:
                             try:
+                                logger.info(f"{self.log_prefix} [DEBUG-叙事] 调用 narrative_manager.get_current_scene()")
                                 current_scene = self.narrative_manager.get_current_scene()
                                 if current_scene:
                                     scene_description = current_scene.image_prompt
+                                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 获取到叙事场景: scene_id={current_scene.scene_id}, description={current_scene.description}")
+                                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 场景时间范围: {current_scene.time_start} - {current_scene.time_end}")
+                                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 场景image_prompt: {current_scene.image_prompt}")
                                     logger.info(f"{self.log_prefix} 使用叙事场景: {current_scene.scene_id}")
+                                else:
+                                    logger.info(f"{self.log_prefix} [DEBUG-叙事] get_current_scene() 返回 None，当前时间不在任何场景范围内")
                             except Exception as e:
+                                import traceback
                                 logger.warning(f"{self.log_prefix} 获取叙事场景失败: {e}")
+                                logger.warning(f"{self.log_prefix} [DEBUG-叙事] 获取场景失败堆栈: {traceback.format_exc()}")
+                        else:
+                            logger.warning(f"{self.log_prefix} [DEBUG-叙事] narrative_manager 为 None，无法获取叙事场景")
                         
                         # 如果还没有场景，检查是否启用 LLM 场景
                         if not scene_description:
@@ -753,20 +798,39 @@ Now generate for current time ({time_str}):"""
                 return None
             
             # 选择模型配置
+            # 优先级：用户配置 > replyer > planner > utils
+            # 明确排除不适合文本生成的模型
+            EXCLUDED_MODELS = {"embedding", "voice", "vlm", "lpmm_entity_extract", "lpmm_rdf_build"}
+            PREFERRED_MODELS = ["replyer", "planner", "utils"]  # 按优先级排序
+            
             model_config = None
+            selected_model_name = ""
+            
             if scene_llm_model and scene_llm_model in available_models:
                 model_config = available_models[scene_llm_model]
+                selected_model_name = scene_llm_model
                 logger.debug(f"{self.log_prefix} 使用配置的 LLM 模型: {scene_llm_model}")
             else:
-                # 使用默认模型（优先选择 normal_chat 或第一个可用模型）
-                if "normal_chat" in available_models:
-                    model_config = available_models["normal_chat"]
-                    logger.debug(f"{self.log_prefix} 使用默认 LLM 模型: normal_chat")
-                else:
-                    # 使用第一个可用模型
-                    first_model_name = next(iter(available_models))
-                    model_config = available_models[first_model_name]
-                    logger.debug(f"{self.log_prefix} 使用第一个可用 LLM 模型: {first_model_name}")
+                # 按优先级尝试选择模型
+                for model_name in PREFERRED_MODELS:
+                    if model_name in available_models:
+                        model_config = available_models[model_name]
+                        selected_model_name = model_name
+                        logger.debug(f"{self.log_prefix} 使用默认 LLM 模型: {model_name}")
+                        break
+                
+                # 如果首选模型都不存在，从剩余模型中选择（排除不适合的）
+                if model_config is None:
+                    for model_name, config in available_models.items():
+                        if model_name not in EXCLUDED_MODELS:
+                            model_config = config
+                            selected_model_name = model_name
+                            logger.debug(f"{self.log_prefix} 使用备选 LLM 模型: {model_name}")
+                            break
+                
+                # 如果仍然没有找到，记录警告
+                if model_config is None:
+                    logger.warning(f"{self.log_prefix} 无法找到适合文本生成的模型，可用模型: {list(available_models.keys())}")
             
             if not model_config:
                 logger.warning(f"{self.log_prefix} 未找到可用的 LLM 模型配置")
@@ -855,8 +919,16 @@ Now generate for current time ({time_str}):"""
             # 检查是否启用叙事配文系统
             enable_narrative = self.plugin.get_config("auto_selfie.enable_narrative", True)
             
+            # [DEBUG-叙事] 记录叙事配文系统状态
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] === 配文生成检查 ===")
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] enable_narrative配置: {enable_narrative}")
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] use_narrative_caption参数: {use_narrative_caption}")
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] caption_generator状态: {'已初始化' if self.caption_generator is not None else '未初始化'}")
+            logger.info(f"{self.log_prefix} [DEBUG-叙事] 条件判断: enable_narrative={enable_narrative} AND use_narrative_caption={use_narrative_caption} AND caption_generator存在={self.caption_generator is not None}")
+            
             # 如果启用叙事配文且传入了 use_narrative_caption=True，优先使用新系统
             if enable_narrative and use_narrative_caption and self.caption_generator is not None:
+                logger.info(f"{self.log_prefix} [DEBUG-叙事] ✓ 进入叙事配文系统")
                 try:
                     # 使用新的配文生成系统
                     logger.debug(f"{self.log_prefix} 使用叙事配文系统生成配文")
@@ -867,17 +939,25 @@ Now generate for current time ({time_str}):"""
                     mood = "neutral"
                     
                     if self.narrative_manager is not None:
+                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 从叙事管理器获取场景和上下文...")
                         current_scene = self.narrative_manager.get_current_scene()
                         narrative_context = self.narrative_manager.get_narrative_context()
                         if self.narrative_manager.state is not None:
                             mood = self.narrative_manager.state.current_mood
+                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 当前场景: {current_scene.scene_id if current_scene else 'None'}")
+                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 叙事上下文长度: {len(narrative_context)} 字符")
+                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 当前情绪: {mood}")
+                    else:
+                        logger.warning(f"{self.log_prefix} [DEBUG-叙事] narrative_manager 为 None，无法获取叙事上下文")
                     
                     # 选择配文类型
+                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 调用 caption_generator.select_caption_type()...")
                     caption_type = self.caption_generator.select_caption_type(
                         scene=current_scene,
                         narrative_context=narrative_context,
                         current_hour=datetime.now().hour
                     )
+                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 选择的配文类型: {caption_type.value}")
                     
                     # 确定场景描述
                     scene_desc = ""
@@ -885,8 +965,10 @@ Now generate for current time ({time_str}):"""
                         scene_desc = current_scene.description
                     elif description:
                         scene_desc = description
+                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 场景描述: {scene_desc}")
                     
                     # 生成配文
+                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 调用 caption_generator.generate_caption()...")
                     ask_message = await self.caption_generator.generate_caption(
                         caption_type=caption_type,
                         scene_description=scene_desc,
@@ -894,9 +976,11 @@ Now generate for current time ({time_str}):"""
                         image_prompt=description or "",
                         mood=mood
                     )
+                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 生成的配文: {ask_message}")
                     
                     # 如果有场景，标记完成
                     if current_scene and self.narrative_manager is not None and ask_message:
+                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 标记场景 {current_scene.scene_id} 完成")
                         self.narrative_manager.mark_scene_completed(
                             current_scene.scene_id,
                             ask_message
@@ -905,8 +989,20 @@ Now generate for current time ({time_str}):"""
                     logger.info(f"{self.log_prefix} 叙事配文生成成功 (类型: {caption_type.value}): {ask_message}")
                     
                 except Exception as e:
+                    import traceback
                     logger.warning(f"{self.log_prefix} 叙事配文生成失败，回退到传统方式: {e}")
+                    logger.warning(f"{self.log_prefix} [DEBUG-叙事] 配文生成失败堆栈: {traceback.format_exc()}")
                     ask_message = ""  # 重置，使用传统方式
+            else:
+                # [DEBUG-叙事] 记录为什么没有进入叙事配文系统
+                reasons = []
+                if not enable_narrative:
+                    reasons.append("enable_narrative=False")
+                if not use_narrative_caption:
+                    reasons.append("use_narrative_caption=False")
+                if self.caption_generator is None:
+                    reasons.append("caption_generator未初始化")
+                logger.info(f"{self.log_prefix} [DEBUG-叙事] ✗ 未进入叙事配文系统，原因: {', '.join(reasons)}")
             
             # 如果叙事配文失败或未启用，使用传统方式
             if not ask_message:

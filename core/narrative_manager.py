@@ -193,29 +193,49 @@ class NarrativeManager:
             now = datetime.now()
             current_time = now.strftime("%H:%M")
 
+        logger.info(f"[DEBUG-叙事] get_current_scene() 被调用，当前时间: {current_time}")
+
         # 确保状态是今天的
         if self._state is None or self._state.date != self._get_today_str():
+            logger.info(f"[DEBUG-叙事] 状态需要重新加载: state={self._state is not None}, state_date={self._state.date if self._state else 'None'}, today={self._get_today_str()}")
             self._state = self.load_state()
 
         # 获取当日剧本的场景列表
         scenes = self.get_script()
+        logger.info(f"[DEBUG-叙事] 当前剧本: {self._state.script_id if self._state else 'unknown'}, 场景数量: {len(scenes)}")
+        logger.info(f"[DEBUG-叙事] 已完成场景列表: {self._state.completed_scenes if self._state else []}")
 
         # 查找适用的场景
         for scene in scenes:
-            if self.is_scene_applicable(scene, current_time):
+            logger.debug(f"[DEBUG-叙事] 检查场景: {scene.scene_id} (时间范围: {scene.time_start}-{scene.time_end})")
+            
+            is_applicable = self.is_scene_applicable(scene, current_time)
+            logger.debug(f"[DEBUG-叙事] 场景 {scene.scene_id} 时间适用性: {is_applicable}")
+            
+            if is_applicable:
                 # 检查场景是否已完成
-                if self._state.is_scene_completed(scene.scene_id):
+                is_completed = self._state.is_scene_completed(scene.scene_id) if self._state else False
+                if is_completed:
+                    logger.info(f"[DEBUG-叙事] 场景 {scene.scene_id} 已完成，跳过")
                     logger.debug(f"场景 {scene.scene_id} 已完成，跳过")
                     continue
 
                 # 检查叙事连贯性
-                if not self.check_narrative_continuity(scene):
+                is_continuous = self.check_narrative_continuity(scene)
+                logger.debug(f"[DEBUG-叙事] 场景 {scene.scene_id} 连贯性检查: {is_continuous}, prev_scene_ids={scene.prev_scene_ids}")
+                
+                if not is_continuous:
+                    logger.info(f"[DEBUG-叙事] 场景 {scene.scene_id} 不满足连贯性要求，跳过 (前置要求: {scene.prev_scene_ids})")
                     logger.debug(f"场景 {scene.scene_id} 不满足连贯性要求，跳过")
                     continue
 
+                logger.info(f"[DEBUG-叙事] ✓ 匹配成功: 场景 {scene.scene_id} ({scene.description})")
                 logger.info(f"匹配到场景: {scene.scene_id} ({scene.description})")
                 return scene
+            else:
+                logger.debug(f"[DEBUG-叙事] 场景 {scene.scene_id} 不在时间范围内 ({scene.time_start}-{scene.time_end}), 当前: {current_time}")
 
+        logger.info(f"[DEBUG-叙事] ✗ 当前时间 {current_time} 没有匹配的场景")
         logger.debug(f"当前时间 {current_time} 没有匹配的场景")
         return None
 
@@ -238,13 +258,18 @@ class NarrativeManager:
             scene_id: 场景ID
             caption: 该场景的配文内容
         """
+        logger.info(f"[DEBUG-叙事] mark_scene_completed() 被调用: scene_id={scene_id}")
+        
         if self._state is None:
+            logger.warning("[DEBUG-叙事] 状态为空，无法标记场景完成")
             logger.warning("状态为空，无法标记场景完成")
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(f"[DEBUG-叙事] 标记场景完成: scene_id={scene_id}, caption={caption[:50] if caption else ''}..., timestamp={timestamp}")
         self._state.add_completed_scene(scene_id, caption, timestamp)
         self.save_state()
+        logger.info(f"[DEBUG-叙事] 场景完成状态已保存，当前已完成场景: {self._state.completed_scenes}")
         logger.info(f"场景 {scene_id} 已标记完成，时间: {timestamp}")
 
     # ==================== 上下文管理 ====================
@@ -258,11 +283,15 @@ class NarrativeManager:
         Returns:
             格式化的上下文字符串，包含最近的场景和配文
         """
+        logger.debug(f"[DEBUG-叙事] get_narrative_context() 被调用，max_entries={max_entries}")
+        
         if self._state is None or not self._state.context_memory:
+            logger.info(f"[DEBUG-叙事] 没有叙事上下文: state={self._state is not None}, context_memory长度={len(self._state.context_memory) if self._state else 0}")
             return "今天还没有发过自拍。"
 
         # 获取最近的记忆条目
         recent_entries = self._state.context_memory[-max_entries:]
+        logger.info(f"[DEBUG-叙事] 获取到 {len(recent_entries)} 条上下文记忆")
 
         context_parts = []
         context_parts.append(f"今天是 {self._state.date}，")
@@ -279,8 +308,11 @@ class NarrativeManager:
             time_part = timestamp.split(" ")[1] if " " in timestamp else timestamp
 
             context_parts.append(f"- [{time_part}] {scene_desc}: \"{caption}\"")
+            logger.debug(f"[DEBUG-叙事] 上下文条目: scene={scene_id}, caption={caption[:30] if caption else ''}...")
 
-        return "\n".join(context_parts)
+        result = "\n".join(context_parts)
+        logger.debug(f"[DEBUG-叙事] 生成的上下文长度: {len(result)} 字符")
+        return result
 
     def get_last_caption(self) -> str:
         """获取上一条配文
@@ -337,24 +369,34 @@ class NarrativeManager:
         Returns:
             如果满足连贯性要求返回 True
         """
+        logger.debug(f"[DEBUG-叙事] check_narrative_continuity() 检查场景: {scene.scene_id}")
+        logger.debug(f"[DEBUG-叙事] 前置场景要求: {scene.prev_scene_ids}")
+        
         # 如果没有前置场景要求，直接通过
         if scene.prev_scene_ids is None or len(scene.prev_scene_ids) == 0:
+            logger.debug(f"[DEBUG-叙事] 场景 {scene.scene_id} 没有前置要求，直接通过")
             return True
 
         if self._state is None:
+            logger.warning(f"[DEBUG-叙事] 状态为空，连贯性检查失败")
             return False
+
+        logger.debug(f"[DEBUG-叙事] 当前已完成场景: {self._state.completed_scenes}")
 
         # 检查是否有任意一个前置场景已完成
         for prev_scene_id in scene.prev_scene_ids:
             if self._state.is_scene_completed(prev_scene_id):
+                logger.debug(f"[DEBUG-叙事] 前置场景 {prev_scene_id} 已完成，连贯性通过")
                 return True
 
         # 如果是当天第一个场景，且有前置要求，检查是否还有时间完成前置
         # 这里简化处理：如果没有任何场景完成，允许触发任何场景
         if len(self._state.completed_scenes) == 0:
+            logger.info(f"[DEBUG-叙事] 今天还没有完成任何场景，允许触发 {scene.scene_id}")
             logger.debug(f"今天还没有完成任何场景，允许触发 {scene.scene_id}")
             return True
 
+        logger.info(f"[DEBUG-叙事] 场景 {scene.scene_id} 连贯性检查失败: 需要前置场景 {scene.prev_scene_ids}，但已完成的是 {self._state.completed_scenes}")
         return False
 
     def get_transition_hint(self, from_scene_id: str, to_scene_id: str) -> str:
