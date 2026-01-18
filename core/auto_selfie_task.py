@@ -1654,12 +1654,24 @@ Now generate for current time ({time_str}):"""
             schedule_times = self.plugin.get_config(
                 "auto_selfie.schedule_times", ["08:00", "12:00", "20:00"]
             )
-            character_name = self.plugin.get_config(
-                "auto_selfie.character_name", "麦麦"
-            )
-            character_persona = self.plugin.get_config(
-                "auto_selfie.character_persona", "一个可爱的二次元女孩"
-            )
+            
+            # 优先读取插件配置，如果为空则使用主程序配置
+            character_name = self.plugin.get_config("auto_selfie.character_name", "")
+            if not character_name:
+                try:
+                    character_name = global_config.bot.nickname or "麦麦"
+                    logger.debug(f"{self.log_prefix} [Smart] 使用主程序配置的角色名称: {character_name}")
+                except Exception:
+                    character_name = "麦麦"
+            
+            character_persona = self.plugin.get_config("auto_selfie.character_persona", "")
+            if not character_persona:
+                try:
+                    character_persona = global_config.personality.personality or "一个可爱的二次元女孩"
+                    logger.debug(f"{self.log_prefix} [Smart] 使用主程序配置的角色人设: {character_persona[:50]}...")
+                except Exception:
+                    character_persona = "一个可爱的二次元女孩"
+            
             weather = self.plugin.get_config("auto_selfie.weather", "晴天")
             is_holiday = self.plugin.get_config("auto_selfie.is_holiday", False)
             

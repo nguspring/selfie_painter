@@ -526,20 +526,20 @@ class CustomPicPlugin(BasePlugin):
             # ==================== 4. 角色设定 ====================
             "character_name": ConfigField(
                 type=str,
-                default="麦麦",
-                description="角色名称（用于场景描述生成）",
-                placeholder="麦麦",
+                default="",
+                description="角色名称（留空则自动使用 MaiBot 主配置 bot.nickname）",
+                placeholder="留空=使用主配置",
                 depends_on="auto_selfie.enabled",
                 depends_value=True,
                 order=8
             ),
             "character_persona": ConfigField(
                 type=str,
-                default="一个可爱活泼的二次元女孩，喜欢美食和逛街",
-                description="角色人设（LLM会根据人设生成符合角色的场景）",
+                default="",
+                description="角色人设（留空则自动使用 MaiBot 主配置 personality.personality）",
                 input_type="textarea",
                 rows=2,
-                placeholder="一个可爱活泼的二次元女孩，喜欢美食和逛街",
+                placeholder="留空=使用主配置的人设",
                 depends_on="auto_selfie.enabled",
                 depends_value=True,
                 order=9
