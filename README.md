@@ -18,7 +18,7 @@
 >
 > | 项目 | 信息 |
 > |------|------|
-> | 原版仓库 | https://github.com/Ptrel/custom_pic_plugin |
+> | 原版仓库 | https://github.com/1021143806/custom_pic_plugin |
 > | 修改版仓库 | https://github.com/nguspring/selfie_painter |
 > | 当前版本 | v3.5.0-beta.6 |
 > | 更新日志 | [新功能添加说明.md](新功能添加说明.md) |
