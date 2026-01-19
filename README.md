@@ -19,7 +19,7 @@
 > | 项目 | 信息 |
 > |------|------|
 > | 原版仓库 | https://github.com/Ptrel/custom_pic_plugin |
-> | 修改版仓库 | https://github.com/nguspring/custom_pic_plugin |
+> | 修改版仓库 | https://github.com/nguspring/selfie_painter |
 > | 当前版本 | v3.5.0-beta.6 |
 > | 更新日志 | [新功能添加说明.md](新功能添加说明.md) |
 >
@@ -75,7 +75,7 @@
 
 ### 1. 安装插件
   - 进入 `MaiBot/plugins` 目录
-  - 克隆仓库：`git clone https://github.com/nguspring/custom_pic_plugin`
+  - 克隆仓库：`git clone https://github.com/nguspring/selfie_painter`
   - 重启 MaiBot，插件会自动生成 `config.toml`
 
 ### 2. 配置模型
@@ -589,4 +589,4 @@ schedule_lifestyle = "日常作息规律，喜欢早起，周末会出门逛街"
 
 - 作者：nguspring
 - 许可证：AGPL-3.0
-- 项目主页：https://github.com/nguspring/custom_pic_plugin
+- 项目主页：https://github.com/nguspring/selfie_painter

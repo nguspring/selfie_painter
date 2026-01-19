@@ -303,10 +303,17 @@ class CustomPicAction(BaseAction):
         # ============================================================
 
         # 提示词优化
+        # 【v3.5.0-beta.7 修复】自拍模式下使用 exclude_hand_actions=True，
+        # 让优化器不生成手部动作描述，避免与 _process_selfie_prompt 随机选择的手部动作冲突
         optimizer_enabled = self.get_config("prompt_optimizer.enabled", True)
         if optimizer_enabled:
             logger.info(f"{self.log_prefix} 开始优化提示词: {description}")#显示所有提示词
-            success, optimized_prompt = await optimize_prompt(description, self.log_prefix)
+            # 自拍模式下排除手部动作描述，由 _process_selfie_prompt 统一控制
+            success, optimized_prompt = await optimize_prompt(
+                description,
+                self.log_prefix,
+                exclude_hand_actions=selfie_mode  # 自拍模式时为 True
+            )
             # 修正：if success 需要缩进在 optimizer_enabled if 内部
             if success:
                 logger.info(f"{self.log_prefix} 提示词优化完成: {optimized_prompt}")#显示所有提示词

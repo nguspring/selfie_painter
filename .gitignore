@@ -6,6 +6,7 @@ old/
 __pycache__/
 .claude
 upgrade_files_*/
+upgrade_files/
 
 # 忽略特定文件
 config.toml
@@ -16,6 +17,7 @@ nul
 
 # 忽略升级包压缩文件
 upgrade_files_*.zip
+custom_pic_plugin_upgrade_files_*.zip
 
 # 忽略特定扩展名的文件（递归）
 **/*.tmp
