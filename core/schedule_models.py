@@ -325,6 +325,73 @@ class DailySchedule:
 
         return None
 
+    def get_closest_entry(
+        self, current_time: Optional[datetime] = None
+    ) -> tuple[Optional[ScheduleEntry], str]:
+        """
+        获取距离当前时间最近的场景条目（不考虑完成状态）
+
+        用于间隔补充触发时，当没有精确匹配的条目时，找到时间上最接近的条目。
+        返回条目和时间关系（before/after/within）。
+
+        Args:
+            current_time: 当前时间，None 则使用系统时间
+
+        Returns:
+            Tuple[条目, 时间关系]:
+                - 条目: 最接近的 ScheduleEntry，没有则返回 None
+                - 时间关系: "before"（当前时间在条目时间点之前）,
+                           "after"（当前时间在条目时间点之后）,
+                           "within"（当前时间在条目时间范围内）
+        """
+        if current_time is None:
+            current_time = datetime.now()
+
+        if not self.entries:
+            return None, ""
+
+        current_time_str = current_time.strftime("%H:%M")
+        current_mins = self._time_to_minutes(current_time_str)
+
+        closest_entry: Optional[ScheduleEntry] = None
+        min_distance = float("inf")
+        time_relation = ""
+
+        for entry in self.entries:
+            # 首先检查是否在条目的时间范围内
+            if self._is_time_in_range(
+                current_time_str, entry.time_range_start, entry.time_range_end
+            ):
+                return entry, "within"
+
+            # 计算与条目时间点的距离
+            entry_mins = self._time_to_minutes(entry.time_point)
+
+            # 计算距离（考虑跨午夜）
+            distance = abs(current_mins - entry_mins)
+            if distance > 720:  # 超过12小时，取另一个方向
+                distance = 1440 - distance
+
+            if distance < min_distance:
+                min_distance = distance
+                closest_entry = entry
+                # 判断时间关系
+                if current_mins < entry_mins:
+                    # 当前时间在条目时间点之前
+                    # 需要考虑跨午夜情况
+                    if entry_mins - current_mins <= 720:
+                        time_relation = "before"
+                    else:
+                        time_relation = "after"
+                else:
+                    # 当前时间在条目时间点之后
+                    if current_mins - entry_mins <= 720:
+                        time_relation = "after"
+                    else:
+                        time_relation = "before"
+
+        return closest_entry, time_relation
+
     def get_next_entry(
         self, current_time: Optional[datetime] = None
     ) -> Optional[ScheduleEntry]:

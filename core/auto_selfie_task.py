@@ -1872,34 +1872,49 @@ Now generate for current time ({time_str}):"""
             # 间隔补充模式：优先尝试读取当前时间对应的日程条目
             logger.info(f"{self.log_prefix} [Smart-Interval] 使用间隔补充模式生成内容")
             
-            # 【修复】重新查询当前时间对应的日程条目（不检查 is_completed 状态）
+            # 【修复 v2】使用就近条目策略 + 智能场景调整
             interval_schedule = await self._ensure_daily_schedule()
             interval_entry: Optional[ScheduleEntry] = None
+            time_relation: str = ""  # before/after/within
             
             if interval_schedule:
-                # 查找当前时间落在哪个日程条目的时间范围内
+                # 首先尝试精确匹配（当前时间在条目的时间范围内）
                 for entry in interval_schedule.entries:
                     if entry.is_time_in_range(current_time_obj):
                         interval_entry = entry
+                        time_relation = "within"
                         logger.info(
-                            f"{self.log_prefix} [Smart-Interval] 找到匹配的日程条目: "
+                            f"{self.log_prefix} [Smart-Interval] 找到精确匹配的日程条目: "
                             f"{entry.time_point} - {entry.activity_description}"
                         )
                         break
+                
+                # 如果没有精确匹配，使用就近条目策略
+                if not interval_entry:
+                    interval_entry, time_relation = interval_schedule.get_closest_entry(current_time_obj)
+                    if interval_entry:
+                        logger.info(
+                            f"{self.log_prefix} [Smart-Interval] 使用就近日程条目: "
+                            f"{interval_entry.time_point} - {interval_entry.activity_description} "
+                            f"(时间关系: {time_relation})"
+                        )
             
             if interval_entry:
-                # 有匹配的日程条目，使用日程驱动方式（与正常时间点一致）
+                # 有匹配的日程条目，使用日程驱动方式
+                # 传递时间关系用于智能调整配文
                 logger.info(
                     f"{self.log_prefix} [Smart-Interval] 使用日程条目驱动场景: "
-                    f"地点={interval_entry.location}, 服装={interval_entry.outfit}"
+                    f"地点={interval_entry.location}, 服装={interval_entry.outfit}, "
+                    f"时间关系={time_relation}"
                 )
                 image_base64, caption, prompt_used = await self._generate_selfie_content_with_entry(
                     representative_stream=representative_stream,
                     schedule_entry=interval_entry,
+                    time_relation=time_relation,  # 新增参数
                 )
             else:
-                # 没有匹配的日程条目，回退到 LLM 生成场景
-                logger.info(f"{self.log_prefix} [Smart-Interval] 无匹配日程，使用 LLM 生成场景")
+                # 没有匹配的日程条目（日程为空），回退到 LLM 生成场景
+                logger.info(f"{self.log_prefix} [Smart-Interval] 无日程条目，使用 LLM 生成场景")
                 scene_description = await self._generate_llm_scene()
                 image_base64, caption, prompt_used = await self._generate_selfie_content_once(
                     representative_stream=representative_stream,
@@ -1991,12 +2006,17 @@ Now generate for current time ({time_str}):"""
         self,
         representative_stream,
         schedule_entry: ScheduleEntry,
+        time_relation: str = "within",
     ) -> Tuple[Optional[str], str, str]:
         """使用日程条目生成自拍图片和配文
         
         Args:
             representative_stream: 代表流（用于初始化 Action）
             schedule_entry: 日程条目
+            time_relation: 时间关系，用于智能调整配文风格
+                - "within": 在条目时间范围内（默认，正常场景）
+                - "before": 当前时间在条目时间之前（准备中、期待中）
+                - "after": 当前时间在条目时间之后（结束后、休息中）
             
         Returns:
             Tuple[图片base64, 配文, 使用的prompt]
@@ -2017,8 +2037,10 @@ Now generate for current time ({time_str}):"""
             scene_generator = SceneActionGenerator(self.plugin)
             caption_context = scene_generator.create_caption_context(schedule_entry)
             
-            # 3. 生成配文
-            caption = await self._generate_caption_for_entry(schedule_entry, caption_context)
+            # 3. 生成配文（传递时间关系用于智能调整）
+            caption = await self._generate_caption_for_entry(
+                schedule_entry, caption_context, time_relation
+            )
             
             # 4. 构造 Mock 对象
             class MockUserInfo:
@@ -2112,16 +2134,53 @@ Now generate for current time ({time_str}):"""
         self,
         schedule_entry: ScheduleEntry,
         caption_context: Dict[str, str],
+        time_relation: str = "within",
     ) -> str:
         """为日程条目生成配文
+        
+        支持时间关系感知的智能配文生成：
+        - within: 正在进行的场景，使用正常配文风格
+        - before: 在日程时间之前，使用"准备中/期待中"的配文风格
+        - after: 在日程时间之后，使用"刚结束/休息中"的配文风格
         
         Args:
             schedule_entry: 日程条目
             caption_context: 配文上下文
+            time_relation: 时间关系 ("within", "before", "after")
             
         Returns:
             生成的配文
         """
+        # 根据时间关系调整场景描述
+        adjusted_scene = schedule_entry.activity_description
+        adjusted_mood = schedule_entry.mood
+        
+        if time_relation == "before":
+            # 在日程时间之前：准备中、期待中的状态
+            adjusted_scene = f"准备{schedule_entry.activity_description}"
+            logger.info(
+                f"{self.log_prefix} [Smart-TimeRelation] 时间在日程之前，"
+                f"调整场景为'准备中'风格: {adjusted_scene}"
+            )
+            # 可以调整情绪为更轻松/期待的
+            if adjusted_mood in ["neutral", "relaxed"]:
+                adjusted_mood = "anticipating"
+        elif time_relation == "after":
+            # 在日程时间之后：结束后、休息中的状态
+            adjusted_scene = f"{schedule_entry.activity_description}结束后休息中"
+            logger.info(
+                f"{self.log_prefix} [Smart-TimeRelation] 时间在日程之后，"
+                f"调整场景为'休息中'风格: {adjusted_scene}"
+            )
+            # 可以调整情绪为更放松的
+            if adjusted_mood in ["neutral", "focused"]:
+                adjusted_mood = "relaxed"
+        else:
+            logger.debug(
+                f"{self.log_prefix} [Smart-TimeRelation] 时间在日程范围内，"
+                f"使用原始场景: {adjusted_scene}"
+            )
+        
         # 首先尝试使用叙事配文系统
         if self.caption_generator is not None:
             try:
@@ -2132,22 +2191,33 @@ Now generate for current time ({time_str}):"""
                 except ValueError:
                     caption_type = CaptionType.SHARE
                 
+                # 根据时间关系调整配文类型
+                if time_relation == "before":
+                    # 准备阶段更适合使用分享或独白类型
+                    if caption_type not in [CaptionType.SHARE, CaptionType.MONOLOGUE]:
+                        caption_type = CaptionType.SHARE
+                elif time_relation == "after":
+                    # 结束后更适合使用独白或分享类型
+                    if caption_type not in [CaptionType.MONOLOGUE, CaptionType.SHARE]:
+                        caption_type = CaptionType.MONOLOGUE
+                
                 caption = await self.caption_generator.generate_caption(
                     caption_type=caption_type,
-                    scene_description=schedule_entry.activity_description,
+                    scene_description=adjusted_scene,  # 使用调整后的场景描述
                     narrative_context=caption_context.get("activity_detail", ""),
                     image_prompt=schedule_entry.suggested_caption_theme,
-                    mood=schedule_entry.mood,
+                    mood=adjusted_mood,  # 使用调整后的情绪
                 )
                 
                 if caption:
                     logger.info(
-                        f"{self.log_prefix} [Smart] 配文生成成功 (类型: {caption_type.value})"
+                        f"{self.log_prefix} [Smart] 配文生成成功 "
+                        f"(类型: {caption_type.value}, 时间关系: {time_relation})"
                     )
                     return caption
                     
             except Exception as e:
                 logger.warning(f"{self.log_prefix} [Smart] 叙事配文生成失败: {e}")
         
-        # 回退到传统方式
-        return await self._generate_traditional_caption(schedule_entry.activity_description)
+        # 回退到传统方式（使用调整后的场景描述）
+        return await self._generate_traditional_caption(adjusted_scene)
