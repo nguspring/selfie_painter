@@ -2097,22 +2097,45 @@ Now generate for current time ({time_str}):"""
                 action_message=mock_message
             )
             
-            # 5. 使用场景驱动方式生成提示词
+            # 5. 根据时间关系调整场景（LLM 驱动）
+            adjusted_scene_prompt: Optional[str] = None
+            if time_relation != "within":
+                logger.info(
+                    f"{self.log_prefix} [Smart] 检测到时间关系为 '{time_relation}'，"
+                    f"尝试使用 LLM 调整场景以增加变化"
+                )
+                adjusted_scene_prompt = await self._adjust_scene_for_time_relation(
+                    schedule_entry=schedule_entry,
+                    time_relation=time_relation,
+                )
+                if adjusted_scene_prompt:
+                    logger.info(
+                        f"{self.log_prefix} [Smart] 场景调整成功，"
+                        f"将使用调整后的场景生成图片"
+                    )
+                else:
+                    logger.info(
+                        f"{self.log_prefix} [Smart] 场景调整失败或返回空，"
+                        f"继续使用原始日程场景"
+                    )
+            
+            # 6. 使用场景驱动方式生成提示词
+            # 如果有调整后的场景描述，将其作为额外描述传入
             prompt = action_instance._process_selfie_prompt(
-                description="",  # 空描述，完全由 schedule_entry 驱动
+                description=adjusted_scene_prompt or "",  # 使用调整后的场景或空描述
                 selfie_style=style,
                 free_hand_action="",
                 model_id=model_id,
-                schedule_entry=schedule_entry,  # 传入日程条目
+                schedule_entry=schedule_entry,  # 传入日程条目（服装、地点等仍从这里读取）
             )
             
-            # 6. 获取负面提示词
+            # 7. 获取负面提示词
             neg_prompt = scene_generator.get_negative_prompt_for_style(style)
             
-            # 7. 获取参考图
+            # 8. 获取参考图
             ref_image = action_instance._get_selfie_reference_image()
             
-            # 8. 执行图片生成
+            # 9. 执行图片生成
             image_base64 = await action_instance._generate_image_only(
                 description=prompt,
                 model_id=model_id,
@@ -2129,6 +2152,164 @@ Now generate for current time ({time_str}):"""
                 f"{self.log_prefix} [Smart] 生成自拍内容失败: {e}", exc_info=True
             )
             return None, "", ""
+
+    async def _adjust_scene_for_time_relation(
+        self,
+        schedule_entry: ScheduleEntry,
+        time_relation: str,
+    ) -> Optional[str]:
+        """使用 LLM 根据时间关系动态调整场景描述
+        
+        当间隔补充触发时（time_relation 为 "before" 或 "after"），
+        调用 LLM 生成一个与原始日程条目相关但有所变化的场景描述。
+        
+        Args:
+            schedule_entry: 原始日程条目
+            time_relation: 时间关系
+                - "within": 在条目时间范围内，返回 None（使用原始场景）
+                - "before": 当前时间在条目时间之前
+                - "after": 当前时间在条目时间之后
+            
+        Returns:
+            调整后的场景描述（SD 提示词格式），如果无需调整返回 None
+        """
+        # 如果是 within，直接返回 None，使用原始场景
+        if time_relation == "within":
+            logger.debug(
+                f"{self.log_prefix} [SceneAdjust] 时间关系为 within，使用原始场景"
+            )
+            return None
+        
+        try:
+            # 获取当前时间信息
+            now = datetime.now()
+            time_str = now.strftime("%H:%M")
+            
+            # 获取 bot 名称
+            try:
+                bot_name = global_config.bot.nickname
+                if not bot_name:
+                    bot_name = "角色"
+            except Exception:
+                bot_name = "角色"
+            
+            # 根据时间关系构建不同的提示词
+            if time_relation == "before":
+                relation_desc = "即将开始"
+                variation_hint = (
+                    "场景应该体现'准备中'或'期待中'的状态，比如：\n"
+                    "- 整理装备、查看时间\n"
+                    "- 换衣服中、化妆中\n"
+                    "- 收拾东西、准备出门\n"
+                    "- 看着窗外、等待中"
+                )
+            else:  # after
+                relation_desc = "刚刚结束"
+                variation_hint = (
+                    "场景应该体现'结束后休息'或'过渡'的状态，比如：\n"
+                    "- 放下道具、换个姿势\n"
+                    "- 躺着休息、伸懒腰\n"
+                    "- 喝水、吃零食\n"
+                    "- 刷手机、发呆中"
+                )
+            
+            # 构建提示词
+            prompt = f"""Current time: {time_str}
+Character: {bot_name}
+Original scheduled activity: {schedule_entry.activity_description}
+Original outfit: {schedule_entry.outfit}
+Original location: {schedule_entry.location}
+Time relation: The scheduled activity has {relation_desc}
+
+Task: Generate a variation of the selfie scene that reflects this time relation.
+
+{variation_hint}
+
+Requirements:
+1. Keep the same location ({schedule_entry.location}) and general outfit theme
+2. Change the pose and action to reflect the '{relation_desc}' state
+3. Output format: English SD prompt tags, comma-separated
+4. Include: pose variation, hand action, expression, any small detail changes
+5. Keep it concise (50-80 words)
+6. Do NOT include character appearance (hair, eyes, etc.)
+7. Do NOT repeat the full outfit description, just mention small variations if any
+
+Example for "after" state of "宅家放松 (playing Switch)":
+"lying on couch, arms stretched, yawning, Switch controller on lap, eyes half-closed, relaxed expression, cozy, messy hair"
+
+Example for "before" state of "下午茶 (cafe time)":
+"checking mirror, adjusting hair, holding bag, standing, anticipating expression, ready to go out"
+
+Now generate for the '{relation_desc}' state of "{schedule_entry.activity_description}":"""
+
+            # 获取可用模型
+            available_models = llm_api.get_available_models()
+            
+            if not available_models:
+                logger.warning(
+                    f"{self.log_prefix} [SceneAdjust] 无可用的 LLM 模型"
+                )
+                return None
+            
+            # 选择模型
+            EXCLUDED_MODELS = {"embedding", "voice", "vlm", "lpmm_entity_extract", "lpmm_rdf_build"}
+            PREFERRED_MODELS = ["replyer", "planner", "utils"]
+            
+            model_config = None
+            
+            for model_name in PREFERRED_MODELS:
+                if model_name in available_models:
+                    model_config = available_models[model_name]
+                    break
+            
+            if model_config is None:
+                for model_name, config in available_models.items():
+                    if model_name not in EXCLUDED_MODELS:
+                        model_config = config
+                        break
+            
+            if not model_config:
+                logger.warning(
+                    f"{self.log_prefix} [SceneAdjust] 未找到可用的 LLM 模型配置"
+                )
+                return None
+            
+            # 调用 LLM
+            success, content, _, model_name = await llm_api.generate_with_model(
+                prompt=prompt,
+                model_config=model_config,
+                request_type="plugin.auto_selfie.scene_adjust",
+                temperature=0.9,  # 较高温度以增加变化
+                max_tokens=150
+            )
+            
+            if success and content:
+                # 清理返回结果
+                adjusted_scene = content.strip().strip('"').strip("'").strip()
+                # 移除可能的前缀解释
+                if ":" in adjusted_scene and len(adjusted_scene.split(":")[0]) < 30:
+                    adjusted_scene = adjusted_scene.split(":", 1)[-1].strip()
+                
+                logger.info(
+                    f"{self.log_prefix} [SceneAdjust] LLM 场景调整成功 "
+                    f"(时间关系: {time_relation}, 模型: {model_name})"
+                )
+                logger.info(
+                    f"{self.log_prefix} [SceneAdjust] 调整后场景: {adjusted_scene[:100]}..."
+                )
+                return adjusted_scene
+            else:
+                logger.warning(
+                    f"{self.log_prefix} [SceneAdjust] LLM 场景调整失败: {content}"
+                )
+                return None
+                
+        except Exception as e:
+            logger.error(
+                f"{self.log_prefix} [SceneAdjust] 场景调整出错: {e}",
+                exc_info=True
+            )
+            return None
 
     async def _generate_caption_for_entry(
         self,
