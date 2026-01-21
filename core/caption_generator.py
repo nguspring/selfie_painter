@@ -3,6 +3,8 @@
 
 负责根据配文类型、场景上下文使用 LLM 生成自然的配文。
 支持 5 种配文类型：叙事式、询问式、分享式、独白式、无配文。
+
+v3.6.0: 移除对 NarrativeScene 的依赖，改用 Any 类型注解
 """
 
 import random
@@ -15,7 +17,6 @@ from src.common.logger import get_logger
 from .selfie_models import (
     CaptionType,
     CaptionWeightConfig,
-    NarrativeScene,
 )
 
 logger = get_logger("CaptionGenerator")
@@ -177,14 +178,14 @@ class CaptionGenerator:
 
     def select_caption_type(
         self,
-        scene: Optional[NarrativeScene] = None,
+        scene: Optional[Any] = None,
         narrative_context: str = "",
         current_hour: Optional[int] = None,
     ) -> CaptionType:
         """智能选择配文类型
 
         Args:
-            scene: 当前场景（如果有）
+            scene: 当前场景（如果有，可以是 ScheduleEntry 或任何有 caption_type 属性的对象）
             narrative_context: 叙事上下文
             current_hour: 当前小时（0-23）
 
@@ -195,14 +196,23 @@ class CaptionGenerator:
         1. 如果场景指定了配文类型，优先使用
         2. 否则根据时间段权重随机选择
         """
-        logger.info(f"[DEBUG-叙事] select_caption_type() 被调用")
-        logger.info(f"[DEBUG-叙事] 参数 - scene: {scene.scene_id if scene else 'None'}, context长度: {len(narrative_context)}, hour: {current_hour}")
+        logger.info("[DEBUG-叙事] select_caption_type() 被调用")
+        scene_id = getattr(scene, 'scene_id', None) or getattr(scene, 'time_point', None)
+        logger.info(f"[DEBUG-叙事] 参数 - scene: {scene_id if scene else 'None'}, context长度: {len(narrative_context)}, hour: {current_hour}")
         
         # 如果场景指定了配文类型，优先使用
-        if scene is not None:
-            logger.info(f"[DEBUG-叙事] 使用场景指定的配文类型: {scene.caption_type.value}")
-            logger.debug(f"使用场景指定的配文类型: {scene.caption_type.value}")
-            return scene.caption_type
+        if scene is not None and hasattr(scene, 'caption_type') and scene.caption_type:
+            caption_type_value = scene.caption_type if isinstance(scene.caption_type, str) else scene.caption_type.value
+            logger.info(f"[DEBUG-叙事] 使用场景指定的配文类型: {caption_type_value}")
+            logger.debug(f"使用场景指定的配文类型: {caption_type_value}")
+            # 如果是字符串，转换为枚举
+            if isinstance(scene.caption_type, str):
+                try:
+                    return CaptionType(scene.caption_type)
+                except ValueError:
+                    pass  # 无效的类型，使用默认逻辑
+            else:
+                return scene.caption_type
 
         # 获取当前小时
         if current_hour is None:

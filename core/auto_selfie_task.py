@@ -16,9 +16,8 @@ from src.common.data_models.database_data_model import DatabaseMessages
 # 导入 bot 名称配置
 from src.config.config import global_config
 
-# 导入新的叙事模块
-from .selfie_models import CaptionType, NarrativeScene, DailyNarrativeState
-from .narrative_manager import NarrativeManager
+# 导入配文模块
+from .selfie_models import CaptionType
 from .caption_generator import CaptionGenerator
 
 # 导入动态日程系统模块
@@ -78,24 +77,17 @@ class AutoSelfieTask(AsyncTask):
         # 加载状态
         self._load_state()
         
-        # 初始化叙事管理器和配文生成器（用于 hybrid 模式和叙事配文功能）
-        self.narrative_manager: Optional[NarrativeManager] = None
+        # 初始化配文生成器（用于 Smart 模式）
         self.caption_generator: Optional[CaptionGenerator] = None
         try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            narrative_state_path = os.path.join(os.path.dirname(current_dir), "narrative_state.json")
-            logger.info(f"{self.log_prefix} [DEBUG-叙事] 正在初始化叙事管理器，状态文件路径: {narrative_state_path}")
-            self.narrative_manager = NarrativeManager(plugin_instance, narrative_state_path)
-            logger.info(f"{self.log_prefix} [DEBUG-叙事] 叙事管理器初始化成功，当前剧本: {self.narrative_manager.current_script_id}")
             self.caption_generator = CaptionGenerator(plugin_instance)
-            logger.info(f"{self.log_prefix} [DEBUG-叙事] 配文生成器初始化成功")
-            logger.info(f"{self.log_prefix} 叙事管理器和配文生成器初始化成功")
+            logger.info(f"{self.log_prefix} 配文生成器初始化成功")
         except Exception as e:
             import traceback
-            logger.warning(f"{self.log_prefix} 叙事模块初始化失败，将使用传统配文方式: {e}")
-            logger.warning(f"{self.log_prefix} [DEBUG-叙事] 初始化失败堆栈: {traceback.format_exc()}")
+            logger.warning(f"{self.log_prefix} 配文生成器初始化失败，将使用传统配文方式: {e}")
+            logger.debug(f"{self.log_prefix} 初始化失败堆栈: {traceback.format_exc()}")
 
-        # 初始化动态日程系统（用于 smart 模式）
+        # 初始化动态日程系统（用于 Smart 模式）
         self.schedule_generator: Optional[ScheduleGenerator] = None
         self.current_schedule: Optional[DailySchedule] = None
         self._schedule_lock = threading.Lock()
@@ -334,48 +326,30 @@ class AutoSelfieTask(AsyncTask):
             
             if enable_narrative and use_narrative_caption and self.caption_generator is not None:
                 try:
-                    # 获取叙事上下文
-                    current_scene: Optional[NarrativeScene] = None
-                    narrative_context = ""
+                    # Smart 模式：使用简化的配文生成（不依赖旧版叙事系统）
+                    scene_desc = description or ""
                     mood = "neutral"
-                    
-                    if self.narrative_manager is not None:
-                        current_scene = self.narrative_manager.get_current_scene()
-                        narrative_context = self.narrative_manager.get_narrative_context()
-                        if self.narrative_manager.state is not None:
-                            mood = self.narrative_manager.state.current_mood
                     
                     # 选择配文类型
                     caption_type = self.caption_generator.select_caption_type(
-                        scene=current_scene,
-                        narrative_context=narrative_context,
+                        scene=None,  # Smart 模式不使用旧版 NarrativeScene
+                        narrative_context="",
                         current_hour=datetime.now().hour
                     )
-                    
-                    # 确定场景描述
-                    scene_desc = ""
-                    if current_scene:
-                        scene_desc = current_scene.description
-                    elif description:
-                        scene_desc = description
                     
                     # 生成配文
                     ask_message = await self.caption_generator.generate_caption(
                         caption_type=caption_type,
                         scene_description=scene_desc,
-                        narrative_context=narrative_context,
+                        narrative_context="",
                         image_prompt=description or "",
                         mood=mood
                     )
                     
-                    # 标记场景完成
-                    if current_scene and self.narrative_manager is not None and ask_message:
-                        self.narrative_manager.mark_scene_completed(current_scene.scene_id, ask_message)
-                    
-                    logger.info(f"{self.log_prefix} 叙事配文生成成功: {ask_message}")
+                    logger.info(f"{self.log_prefix} 配文生成成功: {ask_message}")
                     
                 except Exception as e:
-                    logger.warning(f"{self.log_prefix} 叙事配文生成失败: {e}")
+                    logger.warning(f"{self.log_prefix} 配文生成失败: {e}")
                     ask_message = ""
             
             # 回退到传统方式
@@ -840,93 +814,41 @@ Now generate for current time ({time_str}):"""
             # 2. 生成询问语/配文
             ask_message = ""
             
-            # 检查是否启用叙事配文系统
+            # 检查是否启用配文生成
             enable_narrative = self.plugin.get_config("auto_selfie.enable_narrative", True)
             
-            # [DEBUG-叙事] 记录叙事配文系统状态
-            logger.info(f"{self.log_prefix} [DEBUG-叙事] === 配文生成检查 ===")
-            logger.info(f"{self.log_prefix} [DEBUG-叙事] enable_narrative配置: {enable_narrative}")
-            logger.info(f"{self.log_prefix} [DEBUG-叙事] use_narrative_caption参数: {use_narrative_caption}")
-            logger.info(f"{self.log_prefix} [DEBUG-叙事] caption_generator状态: {'已初始化' if self.caption_generator is not None else '未初始化'}")
-            logger.info(f"{self.log_prefix} [DEBUG-叙事] 条件判断: enable_narrative={enable_narrative} AND use_narrative_caption={use_narrative_caption} AND caption_generator存在={self.caption_generator is not None}")
-            
-            # 如果启用叙事配文且传入了 use_narrative_caption=True，优先使用新系统
+            # 如果启用配文生成且传入了 use_narrative_caption=True，使用配文生成器
             if enable_narrative and use_narrative_caption and self.caption_generator is not None:
-                logger.info(f"{self.log_prefix} [DEBUG-叙事] ✓ 进入叙事配文系统")
+                logger.debug(f"{self.log_prefix} 使用配文生成器生成配文")
                 try:
-                    # 使用新的配文生成系统
-                    logger.debug(f"{self.log_prefix} 使用叙事配文系统生成配文")
-                    
-                    # 获取当前场景
-                    current_scene: Optional[NarrativeScene] = None
-                    narrative_context = ""
+                    # Smart 模式：使用简化的配文生成（不依赖旧版叙事系统）
+                    scene_desc = description or ""
                     mood = "neutral"
                     
-                    if self.narrative_manager is not None:
-                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 从叙事管理器获取场景和上下文...")
-                        current_scene = self.narrative_manager.get_current_scene()
-                        narrative_context = self.narrative_manager.get_narrative_context()
-                        if self.narrative_manager.state is not None:
-                            mood = self.narrative_manager.state.current_mood
-                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 当前场景: {current_scene.scene_id if current_scene else 'None'}")
-                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 叙事上下文长度: {len(narrative_context)} 字符")
-                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 当前情绪: {mood}")
-                    else:
-                        logger.warning(f"{self.log_prefix} [DEBUG-叙事] narrative_manager 为 None，无法获取叙事上下文")
-                    
                     # 选择配文类型
-                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 调用 caption_generator.select_caption_type()...")
                     caption_type = self.caption_generator.select_caption_type(
-                        scene=current_scene,
-                        narrative_context=narrative_context,
+                        scene=None,  # Smart 模式不使用旧版 NarrativeScene
+                        narrative_context="",
                         current_hour=datetime.now().hour
                     )
-                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 选择的配文类型: {caption_type.value}")
-                    
-                    # 确定场景描述
-                    scene_desc = ""
-                    if current_scene:
-                        scene_desc = current_scene.description
-                    elif description:
-                        scene_desc = description
-                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 场景描述: {scene_desc}")
+                    logger.debug(f"{self.log_prefix} 选择的配文类型: {caption_type.value}")
                     
                     # 生成配文
-                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 调用 caption_generator.generate_caption()...")
                     ask_message = await self.caption_generator.generate_caption(
                         caption_type=caption_type,
                         scene_description=scene_desc,
-                        narrative_context=narrative_context,
+                        narrative_context="",
                         image_prompt=description or "",
                         mood=mood
                     )
-                    logger.info(f"{self.log_prefix} [DEBUG-叙事] 生成的配文: {ask_message}")
                     
-                    # 如果有场景，标记完成
-                    if current_scene and self.narrative_manager is not None and ask_message:
-                        logger.info(f"{self.log_prefix} [DEBUG-叙事] 标记场景 {current_scene.scene_id} 完成")
-                        self.narrative_manager.mark_scene_completed(
-                            current_scene.scene_id,
-                            ask_message
-                        )
-                    
-                    logger.info(f"{self.log_prefix} 叙事配文生成成功 (类型: {caption_type.value}): {ask_message}")
+                    logger.info(f"{self.log_prefix} 配文生成成功 (类型: {caption_type.value}): {ask_message}")
                     
                 except Exception as e:
                     import traceback
-                    logger.warning(f"{self.log_prefix} 叙事配文生成失败，回退到传统方式: {e}")
-                    logger.warning(f"{self.log_prefix} [DEBUG-叙事] 配文生成失败堆栈: {traceback.format_exc()}")
+                    logger.warning(f"{self.log_prefix} 配文生成失败，回退到传统方式: {e}")
+                    logger.debug(f"{self.log_prefix} 配文生成失败堆栈: {traceback.format_exc()}")
                     ask_message = ""  # 重置，使用传统方式
-            else:
-                # [DEBUG-叙事] 记录为什么没有进入叙事配文系统
-                reasons = []
-                if not enable_narrative:
-                    reasons.append("enable_narrative=False")
-                if not use_narrative_caption:
-                    reasons.append("use_narrative_caption=False")
-                if self.caption_generator is None:
-                    reasons.append("caption_generator未初始化")
-                logger.info(f"{self.log_prefix} [DEBUG-叙事] ✗ 未进入叙事配文系统，原因: {', '.join(reasons)}")
             
             # 如果叙事配文失败或未启用，使用传统方式
             if not ask_message:

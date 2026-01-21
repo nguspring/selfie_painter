@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.5.0--beta.10-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.5.0--beta.12-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
@@ -20,7 +20,7 @@
 > |------|------|
 > | 原版仓库 | https://github.com/1021143806/custom_pic_plugin |
 > | 修改版仓库 | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.5.0-beta.10 |
+> | 当前版本 | v3.5.0-beta.12 |
 > | 更新日志 | [新功能添加说明.md](新功能添加说明.md) |
 >
 > **修改版定位**：本修改版专注于**定时发送自拍**功能，让 Bot 更像真人；同时主要对**魔搭模型**进行优化，内置 7 个精选魔搭模型预设配置，提供开箱即用的体验。
@@ -34,7 +34,7 @@
 | 🎨 **画图** | 支持文生图/图生图智能识别，兼容 OpenAI、豆包、Gemini、魔搭等多种 API，命令式风格转换，内置 7 个魔搭模型预设 |
 | 📸 **自拍** | 智能日程规划，动态场景描述，自动配文生成，支持自定义人设注入让配文更符合角色设定 |
 
-**v3.5.0-beta.10 新功能**：LLM 驱动的场景变化！当间隔补充触发时，使用 LLM 动态生成与原日程相关但有变化的场景描述（如不同姿势、动作、细节），确保定时触发和间隔补充生成的图片视觉上有明显差异！
+**v3.5.0-beta.12 重要更新**：代码架构精简！移除了旧版叙事系统（NarrativeManager），统一使用 Smart 模式，代码量减少约 20%，提升了运行效率和可维护性。同时修复了场景变体中手机描述导致生成带手机图片的问题。
 
 魔搭 api 的优点是调用免费，AI 绘图本身配置需求并不是很高，但是平台收费又都比较贵，魔搭社区有按天计算的免费调用限额，对应麦麦的绘图需求来说完全足够。如果想接其他风格绘图的可以使用豆包和 GPT 模型。
 
@@ -243,7 +243,7 @@ Smart 模式引入了以下新的核心模块：
 | [`core/schedule_generator.py`](core/schedule_generator.py) | LLM 日程生成器，负责生成每日日程 |
 | [`core/scene_action_generator.py`](core/scene_action_generator.py) | 场景动作生成器，根据场景生成人物动作 |
 
-这些模块与现有的 [`core/narrative_manager.py`](core/narrative_manager.py)、[`core/caption_generator.py`](core/caption_generator.py) 协同工作，实现完整的智能日程生成流程。
+这些模块与 [`core/caption_generator.py`](core/caption_generator.py) 协同工作，实现完整的智能日程生成流程。
 
 ## 🔍 智能参考搜索（v3.4.0 新增）
 
@@ -319,6 +319,44 @@ Smart 模式引入了以下新的核心模块：
 **我的期望**：希望通过统一 TTS 语音合成插件、修改版 custom_pic_plugin 插件、A_MIND 插件、Mai_Only_You 插件这四个插件，塑造出一个真实的麦麦来陪伴用户。让麦麦不仅能用声音与用户交流，还能主动分享自己的生活照片，拥有自己的记忆和情感，成为一个真正有温度的数字伙伴。
 
 ## 📝 更新日志
+
+### v3.5.0-beta.12 (修改版)
+
+**🔧 代码架构精简**
+
+本版本对代码架构进行了重大精简，移除了旧版叙事系统，统一使用 Smart 模式。
+
+**核心改进：**
+- 🗑️ **移除旧版叙事系统**：删除了 `narrative_manager.py` 文件（约 535 行代码）
+- 🔧 **精简 selfie_models.py**：从 384 行精简到约 110 行，只保留 `CaptionType` 和 `CaptionWeightConfig`
+- 🔧 **简化 caption_generator.py**：移除 `NarrativeScene` 依赖
+- 🔧 **清理 auto_selfie_task.py**：移除所有旧版叙事系统引用，简化配文生成逻辑
+- 🐛 **修复手机问题**：修复场景变体中手机描述导致生成带手机图片的问题
+
+**代码精简效果：**
+- ✅ 总代码量减少约 800 行（约 20%）
+- ✅ 移除冗余的 `NarrativeScene`、`DailyNarrativeState`、`DEFAULT_NARRATIVE_SCRIPTS` 类型定义
+- ✅ 统一使用 Smart 模式的日程系统（`schedule_models.py`）
+
+**向后兼容：**
+- ✅ 配文生成功能保持不变
+- ✅ 日程生成功能保持不变
+- ✅ 所有用户配置项保持兼容
+
+---
+
+### v3.5.0-beta.11 (修改版)
+
+**🐛 修复手机描述问题**
+
+本版本修复了场景变体中手机描述导致生成带手机图片的问题。
+
+**Bug 修复：**
+- 🐛 **修复手机描述**：更新 `schedule_generator.py` 中的 LLM 提示词，禁止生成包含"刷手机"、"玩手机"等描述
+- 🔧 **替代方案**：使用 `zoning out`、`staring blankly`、`daydreaming` 等表达替代手机相关动作
+- 📝 **提示词更新**：在日程生成提示词中添加明确的禁止规则
+
+---
 
 ### v3.5.0-beta.10 (修改版)
 
