@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.5.0--beta.12-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.5.0--beta.13-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
@@ -20,7 +20,7 @@
 > |------|------|
 > | 原版仓库 | https://github.com/1021143806/custom_pic_plugin |
 > | 修改版仓库 | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.5.0-beta.12 |
+> | 当前版本 | v3.5.0-beta.13 |
 > | 更新日志 | [新功能添加说明.md](新功能添加说明.md) |
 >
 > **修改版定位**：本修改版专注于**定时发送自拍**功能，让 Bot 更像真人；同时主要对**魔搭模型**进行优化，内置 7 个精选魔搭模型预设配置，提供开箱即用的体验。
@@ -34,7 +34,7 @@
 | 🎨 **画图** | 支持文生图/图生图智能识别，兼容 OpenAI、豆包、Gemini、魔搭等多种 API，命令式风格转换，内置 7 个魔搭模型预设 |
 | 📸 **自拍** | 智能日程规划，动态场景描述，自动配文生成，支持自定义人设注入让配文更符合角色设定 |
 
-**v3.5.0-beta.12 重要更新**：代码架构精简！移除了旧版叙事系统（NarrativeManager），统一使用 Smart 模式，代码量减少约 20%，提升了运行效率和可维护性。同时修复了场景变体中手机描述导致生成带手机图片的问题。
+**v3.5.0-beta.13 重要更新**：新增 OpenAI-Chat 格式 API 客户端，支持通过 chat/completions 接口生成图片的供应商（如 Nano Banana、OpenRouter、Claude 等），修复反重力反代 gemini-3-pro-image 无法使用的问题。
 
 魔搭 api 的优点是调用免费，AI 绘图本身配置需求并不是很高，但是平台收费又都比较贵，魔搭社区有按天计算的免费调用限额，对应麦麦的绘图需求来说完全足够。如果想接其他风格绘图的可以使用豆包和 GPT 模型。
 
@@ -295,7 +295,7 @@ Smart 模式引入了以下新的核心模块：
 - **原作者**：1021143806 (Ptrel) - 创建了原版 custom_pic_plugin 插件
 - **Rabbit-Jia-Er** - 添加了多模型调用和命令功能
 - **saberlights Kiuon** - 添加了自拍功能和自然语言命令功能
-- **A-Dawn** - 感谢对代码问题排查提供的思路，以及 A_MIND 插件带来的灵感启发
+- **A-Dawn** - 感谢对代码问题排查提供的思路，以及 A_MIND 插件带来的灵感启发；感谢提供反重力反代 gemini-3-pro-image 无法使用问题的热修复补丁
 - **XXXxx7258** - 感谢 Mai_Only_You 插件带来的灵感启发
 
 本插件搜图功能部分代码来自于 https://github.com/XXXxx7258/google_search_plugin
@@ -319,6 +319,26 @@ Smart 模式引入了以下新的核心模块：
 **我的期望**：希望通过统一 TTS 语音合成插件、修改版 custom_pic_plugin 插件、A_MIND 插件、Mai_Only_You 插件这四个插件，塑造出一个真实的麦麦来陪伴用户。让麦麦不仅能用声音与用户交流，还能主动分享自己的生活照片，拥有自己的记忆和情感，成为一个真正有温度的数字伙伴。
 
 ## 📝 更新日志
+
+### v3.5.0-beta.13 (修改版)
+
+**🔧 新增 OpenAI-Chat API 客户端**
+
+本版本新增了 OpenAI-Chat 格式 API 客户端，修复反重力反代 gemini-3-pro-image 无法使用的问题。
+
+**新功能：**
+- 🆕 **OpenAI-Chat 格式支持**：新增 `openai_chat_client.py`，支持通过 chat/completions 接口生成图片
+- 🎯 **适用供应商**：Nano Banana、OpenRouter、Claude 等通过 chat/completions 返回图片的服务
+- 🔧 **智能提取**：支持从混合文本或 Markdown 中提取图片 URL 或 Base64 数据
+- 🎨 **Gemini 风格参数**：支持 `image_aspect_ratio` 和 `image_resolution` 参数
+
+**使用方法：**
+在模型配置中将 `format` 设置为 `"openai-chat"` 即可使用新的客户端。
+
+**感谢：**
+- 感谢 A-Dawn 提供热修复补丁！
+
+---
 
 ### v3.5.0-beta.12 (修改版)
 

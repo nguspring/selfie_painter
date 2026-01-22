@@ -2,6 +2,7 @@
 
 支持多种图片生成API：
 - OpenAI 格式 (OpenAI, 硅基流动, NewAPI等)
+- OpenAI-Chat 格式 (Nano Banana, OpenRouter, Claude 等通过chat/completions生图)
 - Doubao 豆包格式
 - Gemini 格式
 - Modelscope 魔搭格式
@@ -13,6 +14,7 @@
 from typing import Optional
 from .base_client import BaseApiClient
 from .openai_client import OpenAIClient
+from .openai_chat_client import OpenAIChatClient
 from .doubao_client import DoubaoClient
 from .gemini_client import GeminiClient
 from .modelscope_client import ModelscopeClient
@@ -23,6 +25,7 @@ from .zai_client import ZaiClient
 __all__ = [
     'BaseApiClient',
     'OpenAIClient',
+    'OpenAIChatClient',
     'DoubaoClient',
     'GeminiClient',
     'ModelscopeClient',
@@ -37,6 +40,7 @@ __all__ = [
 # API格式到客户端类的映射
 CLIENT_MAPPING = {
     'openai': OpenAIClient,
+    'openai-chat': OpenAIChatClient,
     'doubao': DoubaoClient,
     'gemini': GeminiClient,
     'modelscope': ModelscopeClient,
