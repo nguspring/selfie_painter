@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.5.0--beta.14-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.5.0-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
@@ -20,7 +20,7 @@
 > |------|------|
 > | 原版仓库 | https://github.com/1021143806/custom_pic_plugin |
 > | 修改版仓库 | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.5.0-beta.14 |
+> | 当前版本 | v3.5.0 |
 > | 更新日志 | [新功能添加说明.md](新功能添加说明.md) |
 >
 > **修改版定位**：本修改版专注于**定时发送自拍**功能，让 Bot 更像真人；同时主要对**魔搭模型**进行优化，内置 7 个精选魔搭模型预设配置，提供开箱即用的体验。
@@ -34,7 +34,7 @@
 | 🎨 **画图** | 支持文生图/图生图智能识别，兼容 OpenAI、豆包、Gemini、魔搭等多种 API，命令式风格转换，内置 7 个魔搭模型预设 |
 | 📸 **自拍** | 智能日程规划，动态场景描述，自动配文生成，支持自定义人设注入让配文更符合角色设定 |
 
-**v3.5.0-beta.14 重要更新**：修复"重复场景"问题（如连续多次"起床"、午餐吃两小时），将默认时间点从3个增加到9个，并暂时禁用间隔补充功能。优化配置Schema注释，让小白用户也能轻松理解每个配置项的作用。
+**v3.5.0 核心功能**：智能日程模式 (Smart Mode) - 通过 LLM 动态生成每日日程，让麦麦像真人一样每天发送自拍，配文自然有连贯感。支持人设注入、配文多样化、间隔补充等功能。
 
 魔搭 api 的优点是调用免费，AI 绘图本身配置需求并不是很高，但是平台收费又都比较贵，魔搭社区有按天计算的免费调用限额，对应麦麦的绘图需求来说完全足够。如果想接其他风格绘图的可以使用豆包和 GPT 模型。
 
@@ -320,6 +320,40 @@ Smart 模式引入了以下新的核心模块：
 
 ## 📝 更新日志
 
+### v3.5.0 (修改版) - 2026-01-24
+
+**🌟 核心新功能：智能日程模式 (Smart Mode)**
+
+本版本统一使用 Smart 模式处理所有定时自拍，通过 LLM 动态生成每日日程，实现最自然的"真人感"自拍体验。
+
+**主要新增功能：**
+- 🌟 **智能日程模式**：LLM 根据时间点动态生成每日日程，每个时间点包含完整场景描述（地点、姿势、表情、服装、动作）
+- 📝 **配文多样化**：支持5种配文类型（叙事式、询问式、分享式、独白式、无配文），智能选择
+- 🎭 **人设注入功能**：支持自定义人设描述和回复风格，让配文和日程更符合角色设定
+- 🎲 **间隔补充发送**：日程时间点之外也会有概率随机发送自拍，让时间分布更自然
+- 🆕 **OpenAI-Chat 格式支持**：新增 `openai_chat_client.py`，修复反重力反代 gemini-3-pro-image 问题
+- 🆕 **手动自拍读取日程**：请求"来张自拍"时会读取当天日程，保持场景一致性
+
+**重要改进：**
+- 🔧 **代码架构精简**：移除旧版叙事系统（约 800 行冗余代码），统一使用 Smart 模式
+- 🔧 **配置 Schema 优化**：所有配置项添加详细中文说明，小白用户也能轻松理解
+- 🔧 **默认时间点增加**：从3个增加到9个（07:30 ~ 22:00），避免"重复场景"问题
+- 🐛 **修复手机描述问题**：场景变体不再生成带手机的图片
+- 🚀 **性能优化**：定时自拍采用"生成一次，发送多次"模式，多群发送只调用一次 API
+
+**新增模块：**
+- `core/schedule_models.py` - 日程数据模型
+- `core/schedule_generator.py` - LLM 日程生成器
+- `core/scene_action_generator.py` - 场景动作生成器
+- `core/openai_chat_client.py` - OpenAI-Chat API 客户端
+
+**破坏性变更：**
+- ⚠️ **移除 interval 模式**：自动转换为 smart 模式
+- ⚠️ **移除 character_name/character_persona**：人物外观特征由 `selfie.prompt_prefix` 控制
+
+<details>
+<summary>📜 v3.5.0 Beta 版本详细历史（点击展开）</summary>
+
 ### v3.5.0-beta.14 (修改版)
 
 **🔧 修复"重复场景"问题 + 配置优化**
@@ -339,19 +373,6 @@ Smart 模式引入了以下新的核心模块：
 - 📝 **优化配置注释**：所有配置项添加详细的中文说明和使用示例
 - 📝 **白名单格式说明**：明确说明config.toml中需要加双引号，多个ID用逗号隔开
 
-**涉及文件：**
-- `plugin.py`：更新版本号，优化 auto_selfie 配置 Schema
-- `auto_selfie_task.py`：修改默认时间点和禁用间隔补充
-- `pic_action.py`：同步修改默认时间点
-
-**配置说明（小白必读）：**
-```toml
-# 在 config.toml 中配置白名单时，ID必须加双引号！
-chat_id_list = ["qq:123456789:group", "qq:987654321:private"]
-# 群聊格式：qq:群号:group
-# 私聊格式：qq:用户QQ号:private
-```
-
 ---
 
 ### v3.5.0-beta.13 (修改版)
@@ -364,10 +385,6 @@ chat_id_list = ["qq:123456789:group", "qq:987654321:private"]
 - 🆕 **OpenAI-Chat 格式支持**：新增 `openai_chat_client.py`，支持通过 chat/completions 接口生成图片
 - 🎯 **适用供应商**：Nano Banana、OpenRouter、Claude 等通过 chat/completions 返回图片的服务
 - 🔧 **智能提取**：支持从混合文本或 Markdown 中提取图片 URL 或 Base64 数据
-- 🎨 **Gemini 风格参数**：支持 `image_aspect_ratio` 和 `image_resolution` 参数
-
-**使用方法：**
-在模型配置中将 `format` 设置为 `"openai-chat"` 即可使用新的客户端。
 
 **感谢：**
 - 感谢 A-Dawn 提供热修复补丁！
@@ -378,24 +395,10 @@ chat_id_list = ["qq:123456789:group", "qq:987654321:private"]
 
 **🔧 代码架构精简**
 
-本版本对代码架构进行了重大精简，移除了旧版叙事系统，统一使用 Smart 模式。
-
-**核心改进：**
-- 🗑️ **移除旧版叙事系统**：删除了 `narrative_manager.py` 文件（约 535 行代码）
-- 🔧 **精简 selfie_models.py**：从 384 行精简到约 110 行，只保留 `CaptionType` 和 `CaptionWeightConfig`
-- 🔧 **简化 caption_generator.py**：移除 `NarrativeScene` 依赖
-- 🔧 **清理 auto_selfie_task.py**：移除所有旧版叙事系统引用，简化配文生成逻辑
-- 🐛 **修复手机问题**：修复场景变体中手机描述导致生成带手机图片的问题
-
-**代码精简效果：**
+- 🗑️ 移除旧版叙事系统（约 535 行代码）
+- 🔧 精简 selfie_models.py（从 384 行到约 110 行）
+- 🐛 修复手机问题
 - ✅ 总代码量减少约 800 行（约 20%）
-- ✅ 移除冗余的 `NarrativeScene`、`DailyNarrativeState`、`DEFAULT_NARRATIVE_SCRIPTS` 类型定义
-- ✅ 统一使用 Smart 模式的日程系统（`schedule_models.py`）
-
-**向后兼容：**
-- ✅ 配文生成功能保持不变
-- ✅ 日程生成功能保持不变
-- ✅ 所有用户配置项保持兼容
 
 ---
 
@@ -403,12 +406,8 @@ chat_id_list = ["qq:123456789:group", "qq:987654321:private"]
 
 **🐛 修复手机描述问题**
 
-本版本修复了场景变体中手机描述导致生成带手机图片的问题。
-
-**Bug 修复：**
-- 🐛 **修复手机描述**：更新 `schedule_generator.py` 中的 LLM 提示词，禁止生成包含"刷手机"、"玩手机"等描述
-- 🔧 **替代方案**：使用 `zoning out`、`staring blankly`、`daydreaming` 等表达替代手机相关动作
-- 📝 **提示词更新**：在日程生成提示词中添加明确的禁止规则
+- 🐛 更新 LLM 提示词，禁止生成包含"刷手机"、"玩手机"等描述
+- 🔧 使用 `zoning out`、`staring blankly`、`daydreaming` 等表达替代
 
 ---
 
@@ -416,49 +415,18 @@ chat_id_list = ["qq:123456789:group", "qq:987654321:private"]
 
 **🎨 LLM 驱动的场景变化**
 
-本版本解决了间隔补充和定时触发生成相似图片的问题，通过 LLM 动态调整场景描述实现视觉差异化。
-
-**核心改进：**
-- 🆕 **_adjust_scene_for_time_relation()**：新增 LLM 场景调整方法，根据时间关系生成不同的姿势、动作和细节变化
-- 🎭 **时间关系场景变化**：
-  - `after`: 生成"结束后休息"风格的场景（如：躺着、伸懒腰、放下道具）
-  - `before`: 生成"准备中"风格的场景（如：整理装备、化妆、期待中）
-- 📝 **场景变化日志**：新增 `[SceneAdjust]` 日志标签，便于调试
-
-**技术实现：**
-- 🔧 **auto_selfie_task.py**：新增 `_adjust_scene_for_time_relation()` 方法（约 150 行）
-- 🔧 **_generate_selfie_content_with_entry()**：在生成图片前调用场景调整方法
-
-**修复效果：**
-- ✅ 定时触发（如 19:00）生成"正在玩 Switch"的图片
-- ✅ 间隔补充（如 21:00，after 状态）生成"放下 Switch，躺在沙发上伸懒腰"的图片
-- ✅ 服装保持一致，但姿势、动作、表情有明显变化
+- 🆕 新增 `_adjust_scene_for_time_relation()` 方法
+- 🎭 时间关系场景变化（after/before 生成不同风格场景）
 
 ---
 
 ### v3.5.0-beta.9 (修改版)
 
-**🎯 间隔补充"就近条目"策略 + 时间关系感知配文**
+**🎯 间隔补充"就近条目"策略**
 
-本版本增强了间隔补充的日程匹配逻辑，解决了日程条目时间范围存在空白间隔导致场景不一致的问题。
-
-**核心改进：**
-- 🆕 **DailySchedule.get_closest_entry()**：新增"就近条目"方法，当当前时间不在任何条目的精确时间范围内时，自动找到时间上最接近的日程条目
-- 🎯 **时间关系感知**：返回时间关系（before/after/within），用于智能调整配文风格
-- 📝 **智能配文调整**：
-  - `within`: 正常配文风格（"正在做某事"）
-  - `before`: 调整为"准备中/期待中"风格
-  - `after`: 调整为"刚结束/休息中"风格
-
-**技术实现：**
-- 🔧 **schedule_models.py**：`DailySchedule` 类新增 `get_closest_entry()` 方法，支持跨午夜时间计算
-- 🔧 **auto_selfie_task.py**：`_generate_selfie_content_with_entry()` 新增 `time_relation` 参数
-- 🔧 **auto_selfie_task.py**：`_generate_caption_for_entry()` 支持根据时间关系调整场景描述和情绪
-
-**修复效果：**
-- ✅ 间隔补充在 18:10 触发时，即使没有精确匹配的日程，也会使用最近的条目（如 20:00 的晚餐场景）
-- ✅ 服装、地点保持一致，配文智能调整为"准备吃晚饭"风格
-- ✅ 完全解决日程时间范围空白间隔导致的场景不一致问题
+- 🆕 `DailySchedule.get_closest_entry()` 方法
+- 🎯 时间关系感知（before/after/within）
+- 📝 智能配文调整
 
 ---
 
@@ -466,17 +434,8 @@ chat_id_list = ["qq:123456789:group", "qq:987654321:private"]
 
 **🐛 间隔补充日程一致性修复**
 
-本版本修复了间隔补充发送不读取日程的问题，确保场景连续性。
-
-**Bug 修复：**
-- 🐛 **间隔补充读取日程**：修复间隔补充触发时不读取日程数据的问题，现在会正确匹配当前时间对应的日程条目
-- 🔧 **场景一致性**：间隔补充发送的自拍现在会使用日程中的地点、服装等信息，保持场景连续性
-- 🆕 **ScheduleEntry.is_time_in_range()**：新增时间范围判断方法，用于匹配当前时间对应的日程条目
-
-**修复效果：**
-- ✅ 如果日程显示"在办公室"，间隔补充也会生成"办公室"场景
-- ✅ 服装、地点、活动描述等都与日程保持一致
-- ✅ 如果没有匹配的日程条目，仍可回退到 LLM 自由生成场景
+- 🐛 修复间隔补充触发时不读取日程数据的问题
+- 🆕 `ScheduleEntry.is_time_in_range()` 方法
 
 ---
 
@@ -484,30 +443,8 @@ chat_id_list = ["qq:123456789:group", "qq:987654321:private"]
 
 **🎭 人设注入功能**
 
-本版本新增人设注入功能，让配文和日程生成更符合角色设定。
-
-**新增功能：**
-- 🆕 **配文人设注入**：支持自定义人设描述和回复风格，让自拍配文更符合角色个性
-  - `caption_persona_enabled`: 是否启用配文人设（默认 true）
-  - `caption_persona_text`: 人设描述文本
-  - `caption_reply_style`: 回复风格指导
-- 🆕 **日程人设注入**：支持自定义人设和生活方式，让日程安排更符合角色特点
-  - `schedule_persona_enabled`: 是否启用日程人设（默认 true）
-  - `schedule_persona_text`: 日程人设描述
-  - `schedule_lifestyle`: 生活方式描述
-
-**配置示例：**
-```toml
-# 配文人设配置
-caption_persona_enabled = true
-caption_persona_text = "你是一个可爱、活泼的女孩子，说话温柔但偶尔会有点小傲娇"
-caption_reply_style = "语气自然亲切，像是在和好朋友聊天"
-
-# 日程人设配置
-schedule_persona_enabled = true
-schedule_persona_text = "你是一个热爱生活的年轻人，喜欢尝试新事物"
-schedule_lifestyle = "日常作息规律，喜欢早起，周末会出门逛街"
-```
+- 🆕 配文人设注入（caption_persona_enabled/text/reply_style）
+- 🆕 日程人设注入（schedule_persona_enabled/text/lifestyle）
 
 ---
 
@@ -515,17 +452,8 @@ schedule_lifestyle = "日常作息规律，喜欢早起，周末会出门逛街"
 
 **🗑️ 移除角色配置功能**
 
-本版本完全移除了 `character_name` 和 `character_persona` 功能，简化日程生成流程。人物外观特征完全由 `selfie.prompt_prefix` 控制，确保人设稳定性。
-
-**配置变更：**
-- 🗑️ **移除 character_name**：日程生成不再使用角色名称
-- 🗑️ **移除 character_persona**：日程生成不再使用角色人设
-- ✅ **完全使用 selfie.prompt_prefix**：人物外观特征（发色、瞳色等）完全由 `selfie.prompt_prefix` 控制，确保人设稳定性
-
-**技术改进：**
-- 🔧 **schedule_generator.py**：移除 `_get_character_from_maibot_config()` 方法，简化 Prompt 模板
-- 🔧 **函数签名简化**：`_build_generation_prompt()` 和 `_generate_fallback_schedule()` 移除 character_name/character_persona 参数
-- 🔧 **代码清理**：移除 pic_action.py 和 auto_selfie_task.py 中读取这两个配置项的代码
+- 🗑️ 移除 character_name 和 character_persona
+- ✅ 完全使用 selfie.prompt_prefix 控制人物外观
 
 ---
 
@@ -533,19 +461,9 @@ schedule_lifestyle = "日常作息规律，喜欢早起，周末会出门逛街"
 
 **📝 配置结构简化**
 
-本版本重写了 `[auto_selfie]` 配置部分，添加详细中文注释，让用户配置更加清晰易懂。
-
-**配置优化：**
-- 📝 **重写 auto_selfie 配置**：将配置项重新组织为8个清晰的逻辑分组（基础开关、发送时间、发送目标、角色设定、日程生成、间隔补充、图片生成、配文设置）
-- 🆕 **新增 schedule_times**：每天发送自拍的时间点列表（24小时制 HH:MM），LLM会根据时间自动生成对应场景
-- 🆕 **新增 character_name**：角色名称，用于场景描述生成
-- 🆕 **新增 character_persona**：角色人设，LLM会根据人设生成符合角色的场景
-- 🗑️ **删除 schedule_mode**：不再让用户选择模式，统一使用 Smart 模式
-- 🗑️ **删除废弃配置项**：删除 narrative_script、narrative_context_length、ask_model_id 等冗余配置
-- 📝 **详细注释**：每个配置项都有清晰的中文说明，配置文件顶部添加了功能说明和快速开始指南
-
-**同步更新：**
-- 🔧 **plugin.py config_schema**：同步更新 WebUI 配置 Schema，删除废弃配置项，添加新配置项
+- 📝 重写 auto_selfie 配置（8个逻辑分组）
+- 🆕 新增 schedule_times、character_name、character_persona
+- 🗑️ 删除 schedule_mode 等废弃配置项
 
 ---
 
@@ -553,26 +471,8 @@ schedule_lifestyle = "日常作息规律，喜欢早起，周末会出门逛街"
 
 **🎲 间隔补充发送功能**
 
-本版本为 Smart 模式新增了间隔补充发送功能，让自拍时间更加随机自然，增强"真人感"体验。
-
-**新功能：**
-- 🆕 **间隔补充发送**：在日程时间点之外，也会有概率随机发送自拍，让时间分布更加自然
-  - 仅在离日程时间点超过 ±30 分钟时才检查
-  - 采用全局间隔计时器，不是每个聊天流独立计时
-  - 支持概率控制，默认 30% 触发概率
-  - 触发后使用 LLM 生成当前场景，保持内容多样性
-- 🔧 **"生成一次，发送多次"模式增强**：间隔补充发送同样遵循此模式，只调用一次 API 生成图片和配文
-
-**新增配置项：**
-- `enable_interval_supplement`: 是否启用间隔补充发送（默认 true）
-- `interval_minutes`: 间隔时间（分钟），默认 120
-- `interval_probability`: 触发概率（0.0-1.0），默认 0.3
-
-**工作原理：**
-1. 每分钟检查一次，如果当前时间匹配日程条目则按日程发送
-2. 如果没有匹配的日程条目，且距离上次间隔发送已超过配置的间隔时间
-3. 进行概率检查，通过后触发间隔补充发送
-4. 在日程时间点附近（±30分钟）不会触发间隔补充，避免冲突
+- 🆕 间隔补充发送（日程时间点之外随机发送）
+- 🆕 新增配置项：enable_interval_supplement、interval_minutes、interval_probability
 
 ---
 
@@ -580,60 +480,23 @@ schedule_lifestyle = "日常作息规律，喜欢早起，周末会出门逛街"
 
 **🔧 配置 Schema 更新**
 
-本版本更新了配置 schema，使默认配置直接使用 Smart 模式，并清理了旧模式配置项。
-
-**新功能：**
-- 🆕 **手动自拍读取日程**：当用户请求"来张自拍"时，如果当天已生成日程，会智能读取当前时间对应的日程条目，让手动自拍也能融入每日故事线，保持场景和配文的一致性
-
-**配置变更：**
-- 🔧 **schedule_mode 默认值改为 smart**：新用户默认使用智能日程模式
-- 🆕 **新增 schedule_generator_model**：日程生成使用的 LLM 模型配置
-- 🆕 **新增 schedule_min_entries/schedule_max_entries**：控制每天日程条目数量（默认4-8条）
-- 🗑️ **清理已废弃配置项**：删除 schedule_times、interval_minutes、enable_llm_scene、scene_llm_model、time_scenes、interval_probability 等旧模式配置项
-- 📝 **配置注释优化**：更新 chat_id_list 说明，明确在 config 文件和 WebUI 中修改时双引号的要求；更新模型配置注释与参考文件风格一致
-
-**向后兼容：**
-- ✅ 保留 interval/times/hybrid 模式选项（用于兼容旧配置）
-- ✅ 旧模式会在运行时自动升级为 smart 模式
-- ✅ 用户无需修改配置，系统会自动处理
+- 🆕 手动自拍读取日程
+- 🔧 schedule_mode 默认值改为 smart
+- 🆕 新增 schedule_generator_model、schedule_min_entries/max_entries
 
 ---
 
-### v3.5.0 (修改版)
+### v3.5.0-beta.1 (修改版)
 
-**🌟 核心功能：智能日程模式 (Smart Mode)**
+**🌟 智能日程模式初版**
 
-本版本统一使用 Smart 模式处理所有定时自拍，通过 LLM 动态生成每日日程，实现最自然的"真人感"自拍体验。
+- 🌟 Smart Mode 核心功能
+- 🎬 完整场景描述
+- 🎭 场景驱动动作
+- 📝 配文多样化（5种类型）
+- 🚀 "生成一次，发送多次"模式
 
-**新增功能：**
-- 🌟 **智能日程模式 (Smart Mode)**：LLM 根据时间点、角色人设、天气动态生成当天日程
-- 🎬 **完整场景描述**：每个时间点包含地点、姿势、表情、服装、动作
-- 🎭 **场景驱动动作**：人物动作由场景决定，不再使用随机的 hand_actions
-- 📝 **配文多样化**：支持5种配文类型（叙事式、询问式、分享式、独白式、无配文）
-- 🔧 **角色设定配置**：新增 `character_name`、`character_persona`、`schedule_weather` 配置项
-- 🆕 **LLM 智能场景判断**：可根据当前时间自动判断合适的自拍场景
-- 🆕 **Times 模式自定义场景**：支持为每个时间点配置专属场景描述，格式 `"HH:MM|场景描述"`
-- 🆕 **询问语模型选择**：新增 `ask_model_id` 配置
-
-**新增模块：**
-- `core/schedule_models.py` - 日程数据模型（DailySchedule, ScheduleEntry）
-- `core/schedule_generator.py` - LLM 日程生成器
-- `core/scene_action_generator.py` - 场景动作生成器
-- `core/selfie_models.py` - 自拍模型定义
-- `core/narrative_manager.py` - 叙事管理器
-- `core/caption_generator.py` - 配文生成器
-
-**优化改进：**
-- 🚀 **性能优化**：定时自拍采用"生成一次，发送多次"模式
-- 🔧 **模型选择优化**：配文/场景生成优先使用 replyer/planner/utils 模型
-- 🔧 **配文生成器优化**：`caption_model_id` 留空时默认使用 MaiBot 的 replyer 模型
-- 🐛 **修复死锁问题**：修复叙事系统启动时的死锁问题（threading.Lock → RLock）
-- 🔧 **尝试优化自拍双手问题**：优化 standard 模式通用提示词，增强负面提示词
-
-**模式统一：**
-- ⚠️ **废弃 interval 模式**：倒计时触发不符合"真人感"需求，自动转换为 smart 模式
-- ⬆️ **升级 times 模式**：自动升级为 smart 模式，保留时间点触发
-- ⬆️ **废弃 hybrid 模式**：移除倒计时补充，使用纯时间点+场景触发
+</details>
 
 ### v3.4.1 (修改版)
 - 🆕 **定时自拍黑白名单**：支持白名单（仅允许）和黑名单（排除）两种模式，更灵活地控制自拍发送对象。
