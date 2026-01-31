@@ -210,7 +210,7 @@ class CustomPicPlugin(BasePlugin):
     """统一的多模型图片生成插件，支持文生图和图生图"""
 
     # 插件基本信息
-    plugin_name: str = "custom_pic_plugin"  # type: ignore[assignment]
+    plugin_name: str = "selfie_painter"  # type: ignore[assignment]
     plugin_version: str = "3.5.2-beta.1"
     plugin_author: str = "Ptrel，Rabbit，saberlights Kiuon，nguspring"
     enable_plugin: bool = True  # type: ignore[assignment]
@@ -307,7 +307,7 @@ class CustomPicPlugin(BasePlugin):
         "plugin": {
             "name": ConfigField(
                 type=str,
-                default="custom_pic_plugin",
+                default="selfie_painter",
                 description="智能多模型图片生成插件，支持文生图/图生图自动识别",
                 required=True,
                 disabled=True,
@@ -936,13 +936,36 @@ class CustomPicPlugin(BasePlugin):
         # 注入插件实例到 Command 类，以便 Command 可以访问配置管理器保存配置
         PicConfigCommand.plugin_instance = self
 
+        # === 自动迁移：修正旧配置里的插件内部ID（仅当检测到旧值时）===
+        # 背景：历史版本用的是 custom_pic_plugin 作为 plugin_name & 默认配置 name。
+        # 现在插件内部ID改为 selfie_painter，但用户 config.toml 需要平滑迁移。
+        try:
+            cfg = self.enhanced_config_manager.load_config()
+            old_id = None
+            if isinstance(cfg, dict):
+                old_id = cfg.get("plugin", {}).get("name") if isinstance(cfg.get("plugin"), dict) else None
+
+            if old_id in ("custom_pic_plugin", "nguspring_custom_pic_plugin"):
+                print(
+                    f"[selfie_painter] 检测到旧配置 plugin.name={old_id!r}，将自动迁移为 'selfie_painter' 并写回 config.toml"
+                )
+                cfg.setdefault("plugin", {})
+                cfg["plugin"]["name"] = "selfie_painter"
+                # 尽量保留注释：用带注释写回
+                schema_for_manager = self._convert_schema_for_manager()
+                self.enhanced_config_manager.save_config_with_comments(cfg, schema_for_manager)
+                # 同步内存配置
+                self.config = cfg
+        except Exception as e:
+            print(f"[selfie_painter] 自动迁移 plugin.name 失败（将继续使用现有配置）: {e}")
+
         # 检查并更新配置（如果需要），传入原始配置
         self._enhance_config_management(original_config)
 
         # 检查插件启用状态和定时自拍配置
         from src.common.logger import get_logger as get_logger_func
 
-        plugin_logger = get_logger_func("custom_pic_plugin")
+        plugin_logger = get_logger_func("selfie_painter")
 
         plugin_enabled = self.get_config("plugin.enabled", False)
         auto_selfie_enabled = self.get_config("auto_selfie.enabled", False)
@@ -964,7 +987,7 @@ class CustomPicPlugin(BasePlugin):
         """注册定时自拍任务"""
         from src.common.logger import get_logger as get_logger_func
 
-        plugin_logger = get_logger_func("custom_pic_plugin")
+        plugin_logger = get_logger_func("selfie_painter")
 
         try:
             from src.manager.async_task_manager import async_task_manager
