@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.5.1-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.5.2-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
@@ -20,7 +20,7 @@
 > |------|------|
 > | 原版仓库 | https://github.com/1021143806/custom_pic_plugin |
 > | 修改版仓库 | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.5.1 |
+> | 当前版本 | v3.5.2 |
 > | 更新日志 | [新功能添加说明.md](新功能添加说明.md) |
 >
 > **修改版定位**：本修改版专注于**定时发送自拍**功能，让 Bot 更像真人；同时主要对**魔搭模型**进行优化，内置 7 个精选魔搭模型预设配置，提供开箱即用的体验。
@@ -34,7 +34,7 @@
 | 🎨 **画图** | 支持文生图/图生图智能识别，兼容 OpenAI、豆包、Gemini、魔搭等多种 API，命令式风格转换，内置 7 个魔搭模型预设 |
 | 📸 **自拍** | 智能日程规划，动态场景描述，自动配文生成，支持自定义人设注入让配文更符合角色设定 |
 
-**v3.5.1 核心功能**：智能日程模式 (Smart Mode) - 通过 LLM 动态生成每日日程，让麦麦像真人一样每天发送自拍，配文自然有连贯感。支持人设注入、配文多样化、间隔补充等功能。
+**v3.5.2 核心功能**：在 v3.5.1 的基础上强化“日程可观测性 + 去重 + 变体闭环 + 配文贴图 + 叙事连贯”，并修复日程生成在包含嵌套数组时的 `parse_failed` 回退问题。
 
 魔搭 api 的优点是调用免费，AI 绘图本身配置需求并不是很高，但是平台收费又都比较贵，魔搭社区有按天计算的免费调用限额，对应麦麦的绘图需求来说完全足够。如果想接其他风格绘图的可以使用豆包和 GPT 模型。
 
@@ -320,6 +320,19 @@ Smart 模式引入了以下新的核心模块：
 
 ## 📝 更新日志
 
+### v3.5.2 (修改版) - 2026-02-01
+
+- 🐛 修复日程生成 `parse_failed`：使用 `JSONDecoder.raw_decode` 提取完整 JSON 数组，避免 `scene_variations` 等嵌套数组导致的正则截断；并增强解析日志（提取长度 + JSONDecodeError 上下文）
+- ✅ 日程生成 fallback 时必落“失败包”（含 prompt/response/异常堆栈/模型选择路径），并在 `daily_schedule_*.json` 写入 `fallback_reason/fallback_failure_package`
+- ✅ 人设变更触发当日日程自动重生成（基于签名）
+- ✅ 跨天去重：保留最近 N 天日程文件并回灌摘要到 prompt（默认 7 天，可配置 `auto_selfie.schedule_retention_days`）
+- ✅ fallback 模板升级为多套（base+variant），并强制去除 phone/smartphone/mobile/device
+- ✅ 变体闭环：生成图像使用 `SceneVariation`，发送成功后标记已用并持久化
+- ✅ 配文贴图：图片生成后做 VLM 视觉摘要注入配文；可选一致性自检
+- ✅ Phase 5：叙事连贯：发送成功后更新 `DailyNarrativeState`，配文使用叙事上下文承上启下
+- 🔧 修复配置键名不一致：日程生成模型配置使用 `auto_selfie.schedule_generator_model`（旧键 `schedule_model_id` 兼容）
+
+---
 ### v3.5.1 (修改版) - 2026-01-25
 
 **🔧 修复日程回退逻辑 Bug**
