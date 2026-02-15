@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.5.2-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.5.3-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
@@ -20,7 +20,7 @@
 > |------|------|
 > | 原版仓库 | https://github.com/1021143806/custom_pic_plugin |
 > | 修改版仓库 | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.5.2 |
+> | 当前版本 | v3.5.3 |
 > | 更新日志 | [新功能添加说明.md](新功能添加说明.md) |
 >
 > **修改版定位**：本修改版专注于**定时发送自拍**功能，让 Bot 更像真人；同时主要对**魔搭模型**进行优化，内置 7 个精选魔搭模型预设配置，提供开箱即用的体验。
@@ -34,7 +34,7 @@
 | 🎨 **画图** | 支持文生图/图生图智能识别，兼容 OpenAI、豆包、Gemini、魔搭等多种 API，命令式风格转换，内置 7 个魔搭模型预设 |
 | 📸 **自拍** | 智能日程规划，动态场景描述，自动配文生成，支持自定义人设注入让配文更符合角色设定 |
 
-**v3.5.2 核心功能**：在 v3.5.1 的基础上强化“日程可观测性 + 去重 + 变体闭环 + 配文贴图 + 叙事连贯”，并修复日程生成在包含嵌套数组时的 `parse_failed` 回退问题。
+**v3.5.3 核心修复**：修复 WebUI 配置显示不同步（重启后显示旧值但 config 已写入）问题；修复模型 API Key 默认值风险（默认留空，不再写入 Bearer 示例值）。
 
 魔搭 api 的优点是调用免费，AI 绘图本身配置需求并不是很高，但是平台收费又都比较贵，魔搭社区有按天计算的免费调用限额，对应麦麦的绘图需求来说完全足够。如果想接其他风格绘图的可以使用豆包和 GPT 模型。
 
@@ -316,13 +316,33 @@ Smart 模式引入了以下新的核心模块：
 
 原版插件兼容 ComfyUI 后会同步更新。继续对定时自拍功能进行升级，增加更多样化的自拍风格、智能场景选择和更自然的互动模式。
 
-**我的期望**：希望通过我的插件还有“统一 TTS 语音合成”、“A_MIND”、“Mai_Only_You插件”等插件，塑造出一个真实的麦麦来陪伴用户。让麦麦不仅能用声音与用户交流，还能主动分享自己的生活照片，拥有自己的记忆和情感，成为一个真正有温度的数字伙伴。
+**我的期望**：希望通过统一 TTS 语音合成插件、修改版 custom_pic_plugin 插件、A_MIND 插件、Mai_Only_You 插件这四个插件，塑造出一个真实的麦麦来陪伴用户。让麦麦不仅能用声音与用户交流，还能主动分享自己的生活照片，拥有自己的记忆和情感，成为一个真正有温度的数字伙伴。
 
 ## 📝 更新日志
 
-### v3.5.2 (修改版) - 2026-02-01
+### v3.5.3 (修改版) - 2026-02-15
+
+- 🐛 修复 WebUI 与 config.toml 同步问题：
+  - 修复 styles/style_aliases 动态字段显示错位与重启后显示回滚
+  - WebUI 模型分节改为按 config 动态同步，避免固定段导致显示不一致
+- 🔐 修复模型 API Key 默认值风险：
+  - `api_key` 默认值改为空字符串，不再写入 `Bearer xxxxx...` 模板值
+  - 保留 placeholder/说明中的 Bearer 格式指引
+
+---
+
+### v3.5.2-beta.2 (修改版) - 2026-01-31
+
+**本 Beta 版用于在麦麦上进行测试（beta 分支）。**
 
 - 🐛 修复日程生成 `parse_failed`：使用 `JSONDecoder.raw_decode` 提取完整 JSON 数组，避免 `scene_variations` 等嵌套数组导致的正则截断；并增强解析日志（提取长度 + JSONDecodeError 上下文）
+
+---
+
+### v3.5.2-beta.1 (修改版) - 2026-01-30
+
+**本 Beta 版用于在麦麦上进行测试（beta 分支）。**
+
 - ✅ 日程生成 fallback 时必落“失败包”（含 prompt/response/异常堆栈/模型选择路径），并在 `daily_schedule_*.json` 写入 `fallback_reason/fallback_failure_package`
 - ✅ 人设变更触发当日日程自动重生成（基于签名）
 - ✅ 跨天去重：保留最近 N 天日程文件并回灌摘要到 prompt（默认 7 天，可配置 `auto_selfie.schedule_retention_days`）
@@ -333,6 +353,7 @@ Smart 模式引入了以下新的核心模块：
 - 🔧 修复配置键名不一致：日程生成模型配置使用 `auto_selfie.schedule_generator_model`（旧键 `schedule_model_id` 兼容）
 
 ---
+
 ### v3.5.1 (修改版) - 2026-01-25
 
 **🔧 修复日程回退逻辑 Bug**
