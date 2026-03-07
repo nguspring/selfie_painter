@@ -1,6 +1,5 @@
 import base64
 import urllib.request
-import traceback
 import re
 import os
 from typing import Optional, Tuple, List
@@ -161,7 +160,6 @@ class ImageProcessor:
 
         except Exception as e:
             logger.error(f"{self.log_prefix} (B64) 处理图片时错误: {e!r}", exc_info=True)
-            traceback.print_exc()
             return False, f"处理图片时发生错误: {str(e)[:50]}"
 
     def process_api_response(self, result) -> Optional[str]:

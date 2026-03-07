@@ -1,6 +1,6 @@
 """API客户端基类"""
+
 import asyncio
-import base64
 from typing import Dict, Any, Tuple, Optional
 from src.common.logger import get_logger
 
@@ -9,7 +9,17 @@ logger = get_logger("mais_art.api")
 
 class NonRetryableError(Exception):
     """不可重试的错误（如内容审核拒绝），直接终止重试循环"""
+
     pass
+
+
+def get_requests_module() -> Any:
+    """按需导入 requests，避免插件加载阶段因为缺少依赖直接失败。"""
+    try:
+        import requests
+    except ModuleNotFoundError as exc:
+        raise NonRetryableError("缺少依赖 requests，请先安装后再使用该模型。") from exc
+    return requests
 
 
 class BaseApiClient:
@@ -32,11 +42,7 @@ class BaseApiClient:
             proxy_url = self.action.get_config("proxy.url", "http://127.0.0.1:7890")
             timeout = self.action.get_config("proxy.timeout", 60)
 
-            proxy_config = {
-                "http": proxy_url,
-                "https": proxy_url,
-                "timeout": timeout
-            }
+            proxy_config = {"http": proxy_url, "https": proxy_url, "timeout": timeout}
 
             logger.info(f"{self.log_prefix} 代理已启用: {proxy_url}")
             return proxy_config
@@ -53,17 +59,17 @@ class BaseApiClient:
         Returns:
             带有正确MIME类型前缀的data URI
         """
-        if image_base64.startswith('data:image'):
+        if image_base64.startswith("data:image"):
             return image_base64
 
         # 检测图片格式
-        if image_base64.startswith('/9j/'):
+        if image_base64.startswith("/9j/"):
             return f"data:image/jpeg;base64,{image_base64}"
-        elif image_base64.startswith('iVBORw'):
+        elif image_base64.startswith("iVBORw"):
             return f"data:image/png;base64,{image_base64}"
-        elif image_base64.startswith('UklGR'):
+        elif image_base64.startswith("UklGR"):
             return f"data:image/webp;base64,{image_base64}"
-        elif image_base64.startswith('R0lGOD'):
+        elif image_base64.startswith("R0lGOD"):
             return f"data:image/gif;base64,{image_base64}"
         else:
             return f"data:image/jpeg;base64,{image_base64}"
@@ -79,16 +85,16 @@ class BaseApiClient:
         """
         # 移除data URI前缀（如果存在）
         clean_base64 = image_base64
-        if ',' in image_base64:
-            clean_base64 = image_base64.split(',')[1]
+        if "," in image_base64:
+            clean_base64 = image_base64.split(",")[1]
 
-        if clean_base64.startswith('/9j/'):
+        if clean_base64.startswith("/9j/"):
             return "image/jpeg"
-        elif clean_base64.startswith('iVBORw'):
+        elif clean_base64.startswith("iVBORw"):
             return "image/png"
-        elif clean_base64.startswith('UklGR'):
+        elif clean_base64.startswith("UklGR"):
             return "image/webp"
-        elif clean_base64.startswith('R0lGOD'):
+        elif clean_base64.startswith("R0lGOD"):
             return "image/gif"
         else:
             return "image/jpeg"  # 默认
@@ -102,8 +108,8 @@ class BaseApiClient:
         Returns:
             纯base64数据
         """
-        if ',' in image_base64:
-            return image_base64.split(',')[1]
+        if "," in image_base64:
+            return image_base64.split(",")[1]
         return image_base64
 
     async def generate_image(
@@ -111,9 +117,9 @@ class BaseApiClient:
         prompt: str,
         model_config: Dict[str, Any],
         size: str,
-        strength: float = None,
-        input_image_base64: str = None,
-        max_retries: int = 2
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None,
+        max_retries: int = 2,
     ) -> Tuple[bool, str]:
         """生成图片的基础方法，带重试逻辑
 
@@ -143,7 +149,7 @@ class BaseApiClient:
                     model_config=model_config,
                     size=size,
                     strength=strength,
-                    input_image_base64=input_image_base64
+                    input_image_base64=input_image_base64,
                 )
 
                 if success:
@@ -152,7 +158,9 @@ class BaseApiClient:
                     return True, result
 
                 if attempt < max_retries:
-                    logger.warning(f"{self.log_prefix} 第 {attempt + 1} 次API调用失败: {result}，将重试（剩余 {max_retries - attempt} 次）")
+                    logger.warning(
+                        f"{self.log_prefix} 第 {attempt + 1} 次API调用失败: {result}，将重试（剩余 {max_retries - attempt} 次）"
+                    )
                     continue
                 else:
                     logger.error(f"{self.log_prefix} 重试 {max_retries} 次后API调用仍失败: {result}")
@@ -164,7 +172,9 @@ class BaseApiClient:
 
             except Exception as e:
                 if attempt < max_retries:
-                    logger.warning(f"{self.log_prefix} 第 {attempt + 1} 次API调用异常: {e}，将重试（剩余 {max_retries - attempt} 次）")
+                    logger.warning(
+                        f"{self.log_prefix} 第 {attempt + 1} 次API调用异常: {e}，将重试（剩余 {max_retries - attempt} 次）"
+                    )
                     continue
                 else:
                     logger.error(f"{self.log_prefix} 重试后API调用仍异常: {e!r}", exc_info=True)
@@ -177,8 +187,8 @@ class BaseApiClient:
         prompt: str,
         model_config: Dict[str, Any],
         size: str,
-        strength: float = None,
-        input_image_base64: str = None
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """具体的请求实现，子类必须实现此方法
 

@@ -4,7 +4,6 @@
 import json
 import re
 import urllib.request
-import traceback
 from typing import Dict, Any, Tuple, Optional
 
 from .base_client import BaseApiClient, logger
@@ -21,8 +20,8 @@ class ZaiClient(BaseApiClient):
         prompt: str,
         model_config: Dict[str, Any],
         size: str,
-        strength: float = None,
-        input_image_base64: str = None
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None
     ) -> Tuple[bool, str]:
         """发送 Zai chat/completions 请求"""
         base_url = model_config.get("base_url", "https://zai.is/api").rstrip('/')
@@ -137,7 +136,6 @@ class ZaiClient(BaseApiClient):
 
         except Exception as e:
             logger.error(f"{self.log_prefix} (Zai) 请求异常: {e!r}", exc_info=True)
-            traceback.print_exc()
             return False, f"HTTP 请求异常: {str(e)[:100]}"
 
     def _build_image_config(self, model_config: Dict[str, Any]) -> Dict[str, Optional[str]]:

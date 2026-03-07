@@ -9,7 +9,6 @@
 
 import datetime
 import random
-from typing import Optional
 
 from src.common.logger import get_logger
 from src.plugin_system.apis import llm_api, config_api
@@ -29,8 +28,8 @@ def _get_reply_style() -> str:
     if multi_styles and probability > 0 and random.random() < probability:
         try:
             reply_style = random.choice(list(multi_styles))
-        except Exception:
-            pass
+        except (TypeError, IndexError) as exc:
+            logger.debug(f"多样化风格选择失败，回退默认风格: {exc}")
 
     return reply_style or ""
 
@@ -108,15 +107,38 @@ async def generate_caption(
                 return ""
 
             # 完整性检查：配文应以标点或表情结尾，否则可能被截断
-            valid_endings = ("。", "！", "？", "~", "～", "…", ")", "）",
-                            "」", "'", '"', "♪", "☆", "♡",
-                            "呢", "哦", "啊", "呀", "吧", "了", "嘛", "哈", "噢", "耶")
+            valid_endings = (
+                "。",
+                "！",
+                "？",
+                "~",
+                "～",
+                "…",
+                ")",
+                "）",
+                "」",
+                "'",
+                '"',
+                "♪",
+                "☆",
+                "♡",
+                "呢",
+                "哦",
+                "啊",
+                "呀",
+                "吧",
+                "了",
+                "嘛",
+                "哈",
+                "噢",
+                "耶",
+            )
             if len(caption) >= 8 and not caption.endswith(valid_endings):
                 # 尝试截断到最后一个完整句子
                 for punct in ("。", "！", "？", "~", "～", "…"):
                     last_pos = caption.rfind(punct)
                     if last_pos > 0:
-                        caption = caption[:last_pos + 1]
+                        caption = caption[: last_pos + 1]
                         break
 
             logger.info(f"LLM 生成配文: {caption}")

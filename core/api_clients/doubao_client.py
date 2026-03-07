@@ -1,5 +1,6 @@
 """豆包（火山引擎）API客户端"""
-from typing import Dict, Any, Tuple
+
+from typing import Dict, Any, Tuple, Optional
 
 from .base_client import BaseApiClient, NonRetryableError, logger
 
@@ -14,8 +15,8 @@ class DoubaoClient(BaseApiClient):
         prompt: str,
         model_config: Dict[str, Any],
         size: str,
-        strength: float = None,
-        input_image_base64: str = None
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """发送豆包格式的HTTP请求生成图片"""
         try:
@@ -23,7 +24,9 @@ class DoubaoClient(BaseApiClient):
             try:
                 from volcenginesdkarkruntime import Ark
             except ImportError:
-                logger.error(f"{self.log_prefix} (Doubao) 缺少volcenginesdkarkruntime库，请安装: pip install 'volcengine-python-sdk[ark]'")
+                logger.error(
+                    f"{self.log_prefix} (Doubao) 缺少volcenginesdkarkruntime库，请安装: pip install 'volcengine-python-sdk[ark]'"
+                )
                 return False, "缺少豆包SDK，请安装volcengine-python-sdk[ark]"
 
             # 获取代理配置
@@ -39,10 +42,7 @@ class DoubaoClient(BaseApiClient):
             # 如果启用了代理，配置代理
             if proxy_config:
                 proxy_url = proxy_config["http"]
-                client_kwargs["proxies"] = {
-                    "http://": proxy_url,
-                    "https://": proxy_url
-                }
+                client_kwargs["proxies"] = {"http://": proxy_url, "https://": proxy_url}
                 client_kwargs["timeout"] = proxy_config["timeout"]
 
             client = Ark(**client_kwargs)
@@ -57,7 +57,7 @@ class DoubaoClient(BaseApiClient):
                 "prompt": prompt_add,
                 "size": size,
                 "response_format": "url",
-                "watermark": model_config.get("watermark", True)
+                "watermark": model_config.get("watermark", True),
             }
 
             # 添加可选参数
@@ -98,6 +98,6 @@ class DoubaoClient(BaseApiClient):
             ]
             for code in non_retryable_codes:
                 if code in error_str:
-                    raise NonRetryableError(f"豆包内容审核拒绝: {error_str[:100]}")
+                    raise NonRetryableError(f"豆包内容审核拒绝: {error_str[:100]}") from e
             logger.error(f"{self.log_prefix} (Doubao) 请求异常: {e!r}", exc_info=True)
             return False, f"豆包API请求失败: {error_str[:100]}"

@@ -1,32 +1,37 @@
 {
   "manifest_version": 1,
-  "name": "麦麦绘卷（Claude MAInet）",
-  "version": "3.4.0",
-  "description": "智能多模型图片生成插件，支持文生图和图生图自动识别。兼容OpenAI、OpenAI-Chat、豆包、Gemini、魔搭等多种API格式。提供命令式风格转换、模型配置管理、结果缓存、自拍负面提示词、独立生图接口等功能。支持动态模型切换、风格别名、调试开关等高级特性。",
+  "name": "画家麦麦的自拍日常",
+  "version": "3.6.0",
+  "description": "集智能绘画与自拍生成于一体的 MaiBot 插件。支持文生图/图生图自动识别，兼容 OpenAI、OpenAI-Chat、豆包、Gemini、魔搭、ComfyUI 等多种 API 格式。内置日程系统、衣柜系统、三种自拍模式（standard/mirror/photo）、SSE 流式响应支持。提供命令式风格转换、模型配置管理、结果缓存、提示词优化、智能参考搜索等高级特性。",
   "author": {
-    "name": "Ptrel，Rabbit-Jia-Er，saberlights Kiuon",
-    "url": "https://github.com/1021143806/mais_art_journal"
+    "name": "Ptrel，Rabbit-Jia-Er，saberlights Kiuon，nguspring",
+    "url": "https://github.com/nguspring/selfie_painter"
   },
   "license": "GPL-v3.0-or-later",
-
   "host_application": {
     "min_version": "0.10.0"
   },
-  "homepage_url": "https://github.com/1021143806/mais_art_journal",
-  "repository_url": "https://github.com/1021143806/mais_art_journal",
+  "homepage_url": "https://github.com/nguspring/selfie_painter",
+  "repository_url": "https://github.com/nguspring/selfie_painter",
   "keywords": [
-    "draw",
-    "Expression",
-    "ai",
-    "image"
+    "画图",
+    "自拍",
+    "日程",
+    "配文",
+    "AI",
+    "图片",
+    "魔搭",
+    "文生图",
+    "图生图",
+    "人设",
+    "ComfyUI",
+    "衣柜"
   ],
   "categories": [
     "Content Generation",
-    "Multimedia"
+    "Entertainment & Interaction"
   ],
   "default_locale": "zh-CN",
-  "locales_path": "_locales",
-
   "plugin_info": {
     "is_built_in": false,
     "plugin_type": "image_generator",
@@ -70,16 +75,20 @@
     ],
     "features": [
       "智能文生图/图生图识别",
-      "多API格式支持(OpenAI/OpenAI-Chat/豆包/Gemini/魔搭)",
+      "多API格式支持(OpenAI/OpenAI-Chat/豆包/Gemini/魔搭/ComfyUI)",
       "命令式风格转换",
       "动态模型配置管理",
       "风格别名系统",
       "结果缓存机制",
       "调试开关控制",
       "支持图生图开关",
-      "自拍负面提示词",
+      "内置日程系统",
+      "衣柜系统",
+      "三种自拍模式(standard/mirror/photo)",
+      "SSE流式响应支持",
+      "智能参考搜索(内置Bing搜图)",
       "独立生图接口(generate_image_standalone)"
     ]
   },
-  "id": "1021143806.mais_art_journal"
+  "id": "selfie_painter"
 }

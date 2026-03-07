@@ -1,3 +1,4 @@
+import os
 import re
 import time as time_module
 from typing import Tuple, Optional, Dict, Any
@@ -7,8 +8,14 @@ from src.common.logger import get_logger
 
 from .api_clients import ApiClient
 from .utils import (
-    ImageProcessor, runtime_state, optimize_prompt, get_image_size_async,
-    get_model_config, inject_llm_original_size, resolve_image_data,
+    ImageProcessor,
+    RoleReferenceStore,
+    runtime_state,
+    optimize_prompt,
+    get_image_size_async,
+    get_model_config,
+    inject_llm_original_size,
+    resolve_image_data,
     schedule_auto_recall,
 )
 
@@ -23,16 +30,22 @@ class PicCommandMixin:
         try:
             chat_stream = self.message.chat_stream if self.message else None
             return chat_stream.stream_id if chat_stream else None
-        except Exception:
+        except (AttributeError, TypeError) as exc:
+            logger.debug(f"{self.log_prefix} 获取聊天流ID失败，返回空: {exc}")
             return None
 
     def _check_permission(self) -> bool:
         """检查用户权限"""
         try:
             admin_users = self.get_config("components.admin_users", [])
-            user_id = str(self.message.message_info.user_info.user_id) if self.message and self.message.message_info and self.message.message_info.user_info else None
+            user_id = (
+                str(self.message.message_info.user_info.user_id)
+                if self.message and self.message.message_info and self.message.message_info.user_info
+                else None
+            )
             return user_id in admin_users
-        except Exception:
+        except (AttributeError, TypeError, KeyError) as exc:
+            logger.debug(f"{self.log_prefix} 权限检查失败，按无权限处理: {exc}")
             return False
 
     def _resolve_style_alias(self, style_name: str) -> str:
@@ -45,7 +58,7 @@ class PicCommandMixin:
             if isinstance(style_aliases_config, dict):
                 for english_name, aliases_str in style_aliases_config.items():
                     if isinstance(aliases_str, str):
-                        aliases = [alias.strip() for alias in aliases_str.split(',')]
+                        aliases = [alias.strip() for alias in aliases_str.split(",")]
                         if style_name in aliases:
                             logger.info(f"{self.log_prefix} 风格别名 '{style_name}' 解析为 '{english_name}'")
                             return english_name
@@ -55,6 +68,38 @@ class PicCommandMixin:
             logger.error(f"{self.log_prefix} 解析风格别名失败: {e!r}")
             return style_name
 
+    @staticmethod
+    def _create_role_reference_store(command: "BaseCommand") -> "RoleReferenceStore":
+        """创建角色参考图存储实例"""
+        plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return RoleReferenceStore(plugin_dir=plugin_dir, config_getter=command.get_config)
+
+    def _should_apply_role_reference(self, content: str) -> bool:
+        """判断是否应当注入角色参考特征"""
+        if not self.get_config("search_reference.enabled", False):
+            return False
+        if not self.get_config("search_reference.character_only", True):
+            return True
+        role_name = RoleReferenceStore.extract_role_name(content)
+        return bool(role_name)
+
+    def _inject_role_features(self, content: str) -> str:
+        """若检测到角色名且已缓存特征，则注入到提示词中"""
+        if not self._should_apply_role_reference(content):
+            return content
+
+        role_name = RoleReferenceStore.extract_role_name(content)
+        if not role_name:
+            return content
+
+        store = self._create_role_reference_store(self)
+        features = store.get_role_features(role_name)
+        if not features:
+            return content
+
+        weight = float(self.get_config("search_reference.feature_boost_weight", 1.25) or 1.25)
+        weight = max(1.0, min(2.0, weight))
+        return f"{content}, ({features}:{weight})"
 
 class PicGenerationCommand(PicCommandMixin, BaseCommand):
     """图生图Command组件，支持通过命令进行图生图，可选择特定模型"""
@@ -62,8 +107,8 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
     # Command基本信息
     command_name = "pic_generation_command"
     command_description = "图生图命令，使用风格化提示词：/dr <风格> 或自然语言：/dr <描述>"
-    # 排除配置管理保留词，避免与 PicConfigCommand 和 PicStyleCommand 重复匹配
-    command_pattern = r"(?:.*，说：\s*)?/dr\s+(?!list\b|models\b|config\b|set\b|reset\b|on\b|off\b|model\b|recall\b|default\b|styles\b|style\b|help\b|selfie\b)(?P<content>.+)$"
+    # 排除配置管理保留词，避免与 PicConfigCommand、PicStyleCommand 以及衣柜命令冲突
+    command_pattern = r"(?:.*，说：\s*)?/dr\s+(?!list\b|models\b|config\b|set\b|reset\b|on\b|off\b|model\b|recall\b|default\b|refresh\b|clear\b|status\b|styles\b|style\b|help\b|selfie\b|wardrobe\b|衣柜\b)(?P<content>.+)$"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -117,7 +162,7 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
 
         # 步骤2：配置中没有该风格，判断是否是自然语言
         # 检测自然语言特征
-        action_words = ['画', '生成', '绘制', '创作', '制作', '画成', '变成', '改成', '用', '来', '帮我', '给我']
+        action_words = ["画", "生成", "绘制", "创作", "制作", "画成", "变成", "改成", "用", "来", "帮我", "给我"]
         has_action_word = any(word in content for word in action_words)
         is_long_text = len(content) > 6
 
@@ -130,14 +175,18 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
             await self.send_text(f"风格 '{content}' 不存在，使用 /dr styles 查看所有风格")
             return False, f"风格 '{content}' 不存在", True
 
-    async def _execute_style_mode(self, style_name: str, actual_style_name: str, style_prompt: str) -> Tuple[bool, Optional[str], bool]:
+    async def _execute_style_mode(
+        self, style_name: str, actual_style_name: str, style_prompt: str
+    ) -> Tuple[bool, Optional[str], bool]:
         """执行风格模式（只支持图生图，必须有输入图片）"""
         # 获取聊天流ID
         chat_id = self._get_chat_id()
 
         # 从运行时状态获取Command组件使用的模型
         global_command_model = self.get_config("components.pic_command_model", "model1")
-        model_id = runtime_state.get_command_default_model(chat_id, global_command_model) if chat_id else global_command_model
+        model_id = (
+            runtime_state.get_command_default_model(chat_id, global_command_model) if chat_id else global_command_model
+        )
 
         # 检查模型是否在当前聊天流启用
         if chat_id and not runtime_state.is_model_enabled(chat_id, model_id):
@@ -194,7 +243,7 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
                 size=image_size,
                 strength=0.7,  # 默认强度
                 input_image_base64=input_image_base64,
-                max_retries=max_retries
+                max_retries=max_retries,
             )
 
             if success:
@@ -252,7 +301,11 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
         else:
             # 从运行时状态获取默认模型
             global_command_model = self.get_config("components.pic_command_model", "model1")
-            model_id = runtime_state.get_command_default_model(chat_id, global_command_model) if chat_id else global_command_model
+            model_id = (
+                runtime_state.get_command_default_model(chat_id, global_command_model)
+                if chat_id
+                else global_command_model
+            )
 
         # 检查模型是否在当前聊天流启用
         if chat_id and not runtime_state.is_model_enabled(chat_id, model_id):
@@ -290,17 +343,28 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
         optimizer_enabled = self.get_config("prompt_optimizer.enabled", True)
         if optimizer_enabled:
             logger.info(f"{self.log_prefix} 开始优化提示词...")
-            success, optimized_prompt = await optimize_prompt(description, self.log_prefix)
+            # 读取自定义 API 配置
+            custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
+            custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
+            custom_model: str = str(self.get_config("prompt_optimizer.custom_api_model", ""))
+            success, optimized_prompt = await optimize_prompt(
+                description,
+                self.log_prefix,
+                custom_api_base_url=custom_base_url,
+                custom_api_key=custom_api_key,
+                custom_api_model=custom_model,
+            )
             if success:
                 logger.info(f"{self.log_prefix} 提示词优化完成: {optimized_prompt[:80]}...")
                 description = optimized_prompt
             else:
                 logger.warning(f"{self.log_prefix} 提示词优化失败，使用原始描述")
 
+        # 注入角色参考特征（在优化后、尺寸计算前）
+        description = self._inject_role_features(description)
+
         # 使用统一的尺寸处理逻辑（异步版本，支持 LLM 选择尺寸）
-        image_size, llm_original_size = await get_image_size_async(
-            model_config, description, None, self.log_prefix
-        )
+        image_size, llm_original_size = await get_image_size_async(model_config, description, None, self.log_prefix)
 
         if enable_debug:
             await self.send_text(f"正在使用 {model_id} 模型进行{mode_text}...")
@@ -320,7 +384,7 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
                 size=image_size,
                 strength=0.7 if is_img2img_mode else None,
                 input_image_base64=input_image_base64,
-                max_retries=max_retries
+                max_retries=max_retries,
             )
 
             if success:
@@ -368,9 +432,9 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
         """
         # 匹配模式：用/使用 + model/模型 + 数字/ID
         patterns = [
-            r'(?:用|使用)\s*(model\d+)',  # 用model1, 使用model2
-            r'(?:用|使用)\s*(?:模型|型号)\s*(\d+)',  # 用模型1, 使用型号2
-            r'^(model\d+)',  # model1开头
+            r"(?:用|使用)\s*(model\d+)",  # 用model1, 使用model2
+            r"(?:用|使用)\s*(?:模型|型号)\s*(\d+)",  # 用模型1, 使用型号2
+            r"^(model\d+)",  # model1开头
         ]
 
         for pattern in patterns:
@@ -388,13 +452,13 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
         """移除描述中的模型指定部分"""
         # 移除模式
         patterns = [
-            r'(?:用|使用)\s*model\d+\s*(?:画|生成|创作)?',
-            r'(?:用|使用)\s*(?:模型|型号)\s*\d+\s*(?:画|生成|创作)?',
-            r'^model\d+\s*(?:画|生成|创作)?',
+            r"(?:用|使用)\s*model\d+\s*(?:画|生成|创作)?",
+            r"(?:用|使用)\s*(?:模型|型号)\s*\d+\s*(?:画|生成|创作)?",
+            r"^model\d+\s*(?:画|生成|创作)?",
         ]
 
         for pattern in patterns:
-            description = re.sub(pattern, '', description, flags=re.IGNORECASE)
+            description = re.sub(pattern, "", description, flags=re.IGNORECASE)
 
         return description.strip()
 
@@ -415,7 +479,6 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
             logger.error(f"{self.log_prefix} 获取风格配置失败: {e!r}")
             return None
 
-
     def _download_and_encode_base64(self, image_url: str) -> Tuple[bool, str]:
         """下载图片并转换为base64编码（委托给 ImageProcessor）"""
         proxy_url = None
@@ -423,7 +486,9 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
             proxy_url = self.get_config("proxy.url", "http://127.0.0.1:7890")
         return self.image_processor.download_and_encode_base64(image_url, proxy_url=proxy_url)
 
-    async def _schedule_auto_recall_for_recent_message(self, model_config: Dict[str, Any] = None, model_id: str = None, send_timestamp: float = 0.0):
+    async def _schedule_auto_recall_for_recent_message(
+        self, model_config: Dict[str, Any] = None, model_id: str = None, send_timestamp: float = 0.0
+    ):
         """安排最近发送消息的自动撤回"""
         global_enabled = self.get_config("auto_recall.enabled", False)
         if not global_enabled or not model_config:
@@ -451,7 +516,7 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
     # Command基本信息
     command_name = "pic_config_command"
     command_description = "图片生成配置管理：/dr <操作> [参数]"
-    command_pattern = r"(?:.*，说：\s*)?/dr\s+(?P<action>list|models|config|set|reset|on|off|model|recall|default|selfie)(?:\s+(?P<params>.*))?$"
+    command_pattern = r"(?:.*，说：\s*)?/dr\s+(?P<action>list|models|config|set|reset|on|off|model|recall|default|selfie|refresh|clear|status)(?:\s+(?P<params>.*))?$"
 
     async def execute(self) -> Tuple[bool, Optional[str], bool]:
         """执行配置管理命令"""
@@ -472,7 +537,7 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             return False, "无法获取chat_id", True
 
         # 需要管理员权限的操作
-        admin_only_actions = ["set", "reset", "on", "off", "model", "recall", "default", "selfie"]
+        admin_only_actions = ["set", "reset", "on", "off", "model", "recall", "default", "selfie", "refresh", "clear", "status"]
         if not has_permission and action in admin_only_actions:
             await self.send_text("你无权使用此命令", storage_message=False)
             return False, "没有权限", True
@@ -497,12 +562,21 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             return await self._set_default_model(params, chat_id)
         elif action == "selfie":
             return await self._toggle_selfie_schedule(params, chat_id)
+        elif action == "refresh":
+            return await self._refresh_role_reference(params)
+        elif action == "clear":
+            return await self._clear_role_reference(params)
+        elif action == "status":
+            return await self._show_role_reference_status(params)
         else:
             await self.send_text(
                 "配置管理命令使用方法：\n"
                 "/dr list - 列出所有可用模型\n"
                 "/dr config - 显示当前配置\n"
                 "/dr set <模型ID> - 设置图生图命令模型\n"
+                "/dr refresh <角色名> - 刷新角色参考图\n"
+                "/dr status <角色名> - 查看角色参考状态\n"
+                "/dr clear <角色名> - 清除角色参考缓存\n"
                 "/dr reset - 重置为默认配置"
             )
             return False, "无效的操作参数", True
@@ -583,8 +657,6 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
                 await self.send_text(f"模型 '{model_id}' 已被禁用")
                 return False, f"模型 '{model_id}' 已被禁用", True
 
-            model_name = model_config.get("name", model_config.get("model", "未知")) if isinstance(model_config, dict) else "未知"
-
             # 设置运行时状态
             runtime_state.set_command_default_model(chat_id, model_id)
 
@@ -630,8 +702,6 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             global_action_model = self.get_config("generation.default_model", "model1")
             global_command_model = self.get_config("components.pic_command_model", "model1")
             global_plugin_enabled = self.get_config("plugin.enabled", True)
-            global_recall_enabled = self.get_config("auto_recall.enabled", False)
-
             # 获取运行时状态
             plugin_enabled = runtime_state.is_plugin_enabled(chat_id, global_plugin_enabled)
             action_model = runtime_state.get_action_default_model(chat_id, global_action_model)
@@ -716,7 +786,7 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             model_config = self.get_config(f"models.{model_id}")
             if not model_config:
                 await self.send_text(f"模型 '{model_id}' 不存在")
-                return False, f"模型不存在", True
+                return False, "模型不存在", True
 
             enabled = action == "on"
             runtime_state.set_model_enabled(chat_id, model_id, enabled)
@@ -749,7 +819,7 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             model_config = self.get_config(f"models.{model_id}")
             if not model_config:
                 await self.send_text(f"模型 '{model_id}' 不存在")
-                return False, f"模型不存在", True
+                return False, "模型不存在", True
 
             enabled = action == "on"
             runtime_state.set_recall_enabled(chat_id, model_id, enabled)
@@ -774,18 +844,17 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             model_config = self.get_config(f"models.{model_id}")
             if not model_config:
                 await self.send_text(f"模型 '{model_id}' 不存在")
-                return False, f"模型不存在", True
+                return False, "模型不存在", True
 
             # 检查模型是否被禁用
             if not runtime_state.is_model_enabled(chat_id, model_id):
                 await self.send_text(f"模型 '{model_id}' 已被禁用")
-                return False, f"模型已被禁用", True
+                return False, "模型已被禁用", True
 
-            model_name = model_config.get("name", model_config.get("model", "未知")) if isinstance(model_config, dict) else "未知"
             runtime_state.set_action_default_model(chat_id, model_id)
 
             await self.send_text(f"已设置: {model_id}")
-            return True, f"设置成功", True
+            return True, "设置成功", True
 
         except Exception as e:
             logger.error(f"{self.log_prefix} 设置默认模型失败: {e!r}")
@@ -821,6 +890,55 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             await self.send_text(f"操作失败：{str(e)[:100]}")
             return False, f"自拍设置失败: {str(e)}", True
 
+    async def _refresh_role_reference(self, params: str) -> Tuple[bool, Optional[str], bool]:
+        """刷新指定角色的参考图（搜索 + 下载 + VLM 提取特征）"""
+        role_name = str(params or "").strip()
+        if not role_name:
+            await self.send_text("用法: /dr refresh <角色名>")
+            return False, "missing role name", True
+
+        if not self.get_config("search_reference.enabled", False):
+            await self.send_text("角色参考功能未启用，请先在配置中开启 search_reference.enabled")
+            return False, "search_reference disabled", True
+
+        store = self._create_role_reference_store(self)
+        ok, message = await store.refresh_role(role_name)
+        await self.send_text(message)
+        return ok, message, True
+
+    async def _clear_role_reference(self, params: str) -> Tuple[bool, Optional[str], bool]:
+        """清除指定角色的参考图缓存"""
+        role_name = str(params or "").strip()
+        if not role_name:
+            await self.send_text("用法: /dr clear <角色名>")
+            return False, "missing role name", True
+
+        store = self._create_role_reference_store(self)
+        ok, message = store.clear_role(role_name)
+        await self.send_text(message)
+        return ok, message, True
+
+    async def _show_role_reference_status(self, params: str) -> Tuple[bool, Optional[str], bool]:
+        """查看指定角色参考图的状态信息"""
+        role_name = str(params or "").strip()
+        if not role_name:
+            await self.send_text("用法: /dr status <角色名>")
+            return False, "missing role name", True
+
+        store = self._create_role_reference_store(self)
+        ok, data = store.role_status(role_name)
+        if not ok:
+            await self.send_text(str(data.get("message", "查询失败")))
+            return False, "status failed", True
+
+        message = (
+            f"角色: {data.get('role_name', role_name)}\n"
+            f"图片数: {data.get('image_count', 0)}\n"
+            f"大小: {data.get('size_mb', 0)} MB\n"
+            f"更新时间: {data.get('updated_at', '未知')}"
+        )
+        await self.send_text(message)
+        return True, "status ok", True
 
 class PicStyleCommand(PicCommandMixin, BaseCommand):
     """图片风格管理命令"""
@@ -880,7 +998,7 @@ class PicStyleCommand(PicCommandMixin, BaseCommand):
                     aliases = []
                     for alias_style, alias_names in aliases_config.items():
                         if alias_style == style_id and isinstance(alias_names, str):
-                            aliases = [name.strip() for name in alias_names.split(',')]
+                            aliases = [name.strip() for name in alias_names.split(",")]
                             break
 
                     alias_text = f" (别名: {', '.join(aliases)})" if aliases else ""
@@ -917,23 +1035,15 @@ class PicStyleCommand(PicCommandMixin, BaseCommand):
             aliases = []
             for alias_style, alias_names in aliases_config.items():
                 if alias_style == actual_style and isinstance(alias_names, str):
-                    aliases = [name.strip() for name in alias_names.split(',')]
+                    aliases = [name.strip() for name in alias_names.split(",")]
                     break
 
-            message_lines = [
-                f"🎨 风格详情：{actual_style}\n",
-                f"📝 完整提示词：",
-                f"{style_prompt}\n"
-            ]
+            message_lines = [f"🎨 风格详情：{actual_style}\n", "📝 完整提示词：", f"{style_prompt}\n"]
 
             if aliases:
                 message_lines.append(f"🏷️ 别名: {', '.join(aliases)}\n")
 
-            message_lines.extend([
-                "💡 使用方法：",
-                f"/dr {style_name}",
-                "\n⚠️ 注意：需要先发送一张图片作为输入"
-            ])
+            message_lines.extend(["💡 使用方法：", f"/dr {style_name}", "\n⚠️ 注意：需要先发送一张图片作为输入"])
 
             message = "\n".join(message_lines)
             await self.send_text(message)
@@ -960,25 +1070,32 @@ class PicStyleCommand(PicCommandMixin, BaseCommand):
             ]
 
             if has_permission:
-                lines.extend([
-                    "\n⚙️ 管理员命令：",
-                    "• /dr on|off - 开关插件",
-                    "• /dr model on|off <模型ID> - 开关模型",
-                    "• /dr recall on|off <模型ID> - 开关撤回",
-                    "• /dr selfie on|off - 开关自拍日程增强",
-                    "• /dr selfie standard|mirror|photo - 切换自拍风格",
-                    "• /dr default <模型ID> - 设置默认模型",
-                    "• /dr set <模型ID> - 设置/dr命令模型",
-                    "• /dr style <风格名> - 查看风格详情",
-                    "• /dr reset - 重置所有配置",
-                ])
+                lines.extend(
+                    [
+                        "\n⚙️ 管理员命令：",
+                        "• /dr on|off - 开关插件",
+                        "• /dr model on|off <模型ID> - 开关模型",
+                        "• /dr recall on|off <模型ID> - 开关撤回",
+                        "• /dr selfie on|off - 开关自拍日程增强",
+                        "• /dr selfie standard|mirror|photo - 切换自拍风格",
+                        "• /dr default <模型ID> - 设置默认模型",
+                        "• /dr set <模型ID> - 设置/dr命令模型",
+                        "• /dr style <风格名> - 查看风格详情",
+                        "• /dr refresh <角色名> - 刷新角色参考图",
+                        "• /dr status <角色名> - 查看角色参考状态",
+                        "• /dr clear <角色名> - 清除角色参考缓存",
+                        "• /dr reset - 重置所有配置",
+                    ]
+                )
 
-            lines.extend([
-                "\n💡 使用流程：",
-                "1. 发送一张图片",
-                "2. 使用 /dr <风格名> 进行风格转换",
-                "3. 等待处理完成",
-            ])
+            lines.extend(
+                [
+                    "\n💡 使用流程：",
+                    "1. 发送一张图片",
+                    "2. 使用 /dr <风格名> 进行风格转换",
+                    "3. 等待处理完成",
+                ]
+            )
 
             await self.send_text("\n".join(lines))
             return True, "帮助信息显示成功", True

@@ -96,7 +96,7 @@ async def select_size_with_llm(description: str, log_prefix: str = "") -> Option
         return None
 
 
-def get_image_size(model_config: dict, llm_size: str = None, log_prefix: str = "") -> Tuple[str, Optional[str]]:
+def get_image_size(model_config: dict, llm_size: Optional[str] = None, log_prefix: str = "") -> Tuple[str, Optional[str]]:
     """统一的图片尺寸获取逻辑
 
     根据 fixed_size_enabled 配置决定使用 LLM 选择的尺寸还是配置文件的固定尺寸。
@@ -131,7 +131,7 @@ def get_image_size(model_config: dict, llm_size: str = None, log_prefix: str = "
 async def get_image_size_async(
     model_config: dict,
     description: str = "",
-    llm_size: str = None,
+    llm_size: Optional[str] = None,
     log_prefix: str = ""
 ) -> Tuple[str, Optional[str]]:
     """异步版本的图片尺寸获取逻辑

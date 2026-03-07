@@ -1,9 +1,8 @@
 """Gemini API客户端"""
 import json
-import requests
 from typing import Dict, Any, Tuple, Optional
 
-from .base_client import BaseApiClient, logger
+from .base_client import BaseApiClient, logger, get_requests_module
 from ..utils import pixel_size_to_gemini_aspect
 
 
@@ -17,10 +16,11 @@ class GeminiClient(BaseApiClient):
         prompt: str,
         model_config: Dict[str, Any],
         size: str,
-        strength: float = None,
-        input_image_base64: str = None
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None
     ) -> Tuple[bool, str]:
         """发送Gemini格式的HTTP请求生成图片"""
+        requests = get_requests_module()
         try:
             # API配置
             api_key = model_config.get("api_key", "").replace("Bearer ", "")
@@ -140,15 +140,16 @@ class GeminiClient(BaseApiClient):
                 logger.error(f"{self.log_prefix} (Gemini) JSON解析失败: {e}")
                 return False, f"响应解析失败: {str(e)}"
 
-        except requests.RequestException as e:
-            logger.error(f"{self.log_prefix} (Gemini) 网络请求异常: {e}")
-            return False, f"网络请求失败: {str(e)}"
-
         except Exception as e:
             logger.error(f"{self.log_prefix} (Gemini) 请求异常: {e!r}", exc_info=True)
             return False, f"请求失败: {str(e)}"
 
-    def _build_gemini_image_config(self, model_name: str, model_config: Dict[str, Any], llm_size: str = None) -> Optional[Dict[str, str]]:
+    def _build_gemini_image_config(
+        self,
+        model_name: str,
+        model_config: Dict[str, Any],
+        llm_size: Optional[str] = None,
+    ) -> Optional[Dict[str, str]]:
         """构建 Gemini 图片配置"""
         fixed_size_enabled = model_config.get("fixed_size_enabled", False)
         default_size = model_config.get("default_size", "").strip()

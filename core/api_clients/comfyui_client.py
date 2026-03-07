@@ -28,6 +28,7 @@ import os
 import random
 import time
 import uuid
+import urllib.parse
 import urllib.request
 from typing import Dict, Any, Tuple, Optional
 
@@ -59,8 +60,8 @@ class ComfyUIClient(BaseApiClient):
         prompt: str,
         model_config: Dict[str, Any],
         size: str,
-        strength: float = None,
-        input_image_base64: str = None
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None
     ) -> Tuple[bool, str]:
         """通过 ComfyUI 工作流生成图片"""
         base_url = model_config.get("base_url", "http://127.0.0.1:8188").rstrip("/")
@@ -116,7 +117,8 @@ class ComfyUIClient(BaseApiClient):
         try:
             w, h = size.lower().split("x")
             width, height = int(w), int(h)
-        except Exception:
+        except (AttributeError, ValueError) as exc:
+            logger.debug(f"{self.log_prefix} (ComfyUI) 尺寸解析失败，回退默认 1024x1024: {exc}")
             width, height = 1024, 1024
         workflow_str = workflow_str.replace('"${width}"', str(width))
         workflow_str = workflow_str.replace('"${height}"', str(height))
@@ -198,8 +200,8 @@ class ComfyUIClient(BaseApiClient):
                         history = json.loads(resp.read().decode("utf-8"))
                         if prompt_id in history:
                             return self._extract_filename(history[prompt_id])
-            except Exception:
-                pass  # 网络抖动，继续轮询
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+                logger.debug(f"{self.log_prefix} (ComfyUI) 轮询中断，继续重试: {exc}")
             time.sleep(1)
 
         logger.error(f"{self.log_prefix} (ComfyUI) 轮询超时 ({timeout}s)")
@@ -215,13 +217,13 @@ class ComfyUIClient(BaseApiClient):
                     for img in node_output["images"]:
                         if "filename" in img:
                             return img["filename"]
-        except Exception:
-            pass
+        except (AttributeError, TypeError, KeyError) as exc:
+            logger.debug(f"(ComfyUI) 提取输出文件名失败: {exc}")
         return None
 
     def _download_image_sync(self, base_url: str, filename: str, opener: urllib.request.OpenerDirector) -> Optional[str]:
         """从 ComfyUI 下载生成的图片，返回 base64 字符串"""
-        url = f"{base_url}/view?filename={urllib.request.quote(filename)}&subfolder=&type=output"
+        url = f"{base_url}/view?filename={urllib.parse.quote(filename)}&subfolder=&type=output"
         try:
             req = urllib.request.Request(url, method="GET")
             with opener.open(req, timeout=30) as resp:

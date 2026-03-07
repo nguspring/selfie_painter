@@ -15,7 +15,7 @@ from typing import Dict, List, Optional
 from src.common.logger import get_logger
 
 from .schedule_provider import ActivityInfo
-from ..utils import SELFIE_HAND_NEGATIVE, ANTI_DUAL_PHONE_PROMPT
+from ..utils import SELFIE_HAND_NEGATIVE, ANTI_DUAL_PHONE_PROMPT, ANTI_CAMERA_DEVICE_PROMPT
 
 logger = get_logger("auto_selfie.scene")
 
@@ -376,6 +376,7 @@ async def convert_to_selfie_prompt(
             "selfie, front camera view, POV selfie, "
             "(front facing selfie camera angle:1.3), "
             "looking at camera, slight high angle selfie, "
+            "(phone-holding arm out of frame:1.3), "
             "upper body shot, cowboy shot, "
             "(centered composition:1.2)"
         )
@@ -415,8 +416,10 @@ def get_negative_prompt_for_style(selfie_style: str, base_negative: str = "") ->
     # 所有风格都加手部质量负面提示词
     parts.append(SELFIE_HAND_NEGATIVE)
 
-    # standard 额外加防双手拿手机
+    # standard 额外加防双手拿手机，photo 额外加禁止拍照设备
     if selfie_style == "standard":
         parts.append(ANTI_DUAL_PHONE_PROMPT)
+    elif selfie_style == "photo":
+        parts.append(ANTI_CAMERA_DEVICE_PROMPT)
 
     return ", ".join(parts)

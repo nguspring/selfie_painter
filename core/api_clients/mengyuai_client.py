@@ -5,10 +5,9 @@
 """
 import json
 import base64
-import requests
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
-from .base_client import BaseApiClient, logger
+from .base_client import BaseApiClient, logger, get_requests_module
 from ..utils import parse_pixel_size
 
 
@@ -22,10 +21,11 @@ class MengyuaiClient(BaseApiClient):
         prompt: str,
         model_config: Dict[str, Any],
         size: str,
-        strength: float = None,
-        input_image_base64: str = None
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """发送梦羽AI格式的HTTP请求生成图片"""
+        requests = get_requests_module()
         try:
             # API配置
             base_url = model_config.get("base_url", "https://sd.exacg.cc").rstrip('/')
@@ -194,10 +194,6 @@ class MengyuaiClient(BaseApiClient):
                 logger.error(f"{self.log_prefix} (梦羽AI) 响应解析失败")
                 return False, "响应解析失败"
 
-        except requests.RequestException as e:
-            logger.error(f"{self.log_prefix} (梦羽AI) 网络请求异常: {e}")
-            return False, f"网络请求失败: {str(e)}"
-
         except Exception as e:
             logger.error(f"{self.log_prefix} (梦羽AI) 请求异常: {e!r}", exc_info=True)
             return False, f"请求失败: {str(e)}"
@@ -218,6 +214,7 @@ class MengyuaiClient(BaseApiClient):
         Returns:
             图片的base64编码，失败返回空字符串
         """
+        requests = get_requests_module()
         try:
             request_kwargs = {"url": url, "timeout": 30}
 
@@ -248,6 +245,7 @@ class MengyuaiClient(BaseApiClient):
         Returns:
             图片URL，失败返回空字符串
         """
+        requests = get_requests_module()
         try:
             # 将base64转为bytes
             image_bytes = base64.b64decode(self._get_clean_base64(image_base64))

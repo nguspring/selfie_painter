@@ -1,24 +1,26 @@
-import traceback
 import base64
 import os
 import time as time_module
 from typing import Tuple, Optional, Dict, Any
 
-from src.plugin_system.base.base_action import BaseAction
-from src.plugin_system.base.component_types import ActionActivationType, ChatMode
-from src.common.logger import get_logger
+from src.plugin_system.base.base_action import BaseAction  # pyright: ignore[reportMissingImports]
+from src.plugin_system.base.component_types import (  # pyright: ignore[reportMissingImports]
+    ActionActivationType,
+    ChatMode,
+)
+from src.common.logger import get_logger  # pyright: ignore[reportMissingImports]
 
 from .api_clients import get_client_class
 from .utils import (
     ImageProcessor, CacheManager, validate_image_size, get_image_size,
-    runtime_state, SELFIE_HAND_NEGATIVE, ANTI_DUAL_PHONE_PROMPT,
+    runtime_state, SELFIE_HAND_NEGATIVE, ANTI_DUAL_PHONE_PROMPT, ANTI_CAMERA_DEVICE_PROMPT,
     get_model_config, merge_negative_prompt, inject_llm_original_size,
     resolve_image_data, schedule_auto_recall, optimize_prompt,
 )
 
-logger = get_logger("mais_art")
+logger = get_logger("selfie_painter")
 
-class MaisArtAction(BaseAction):
+class SelfiePainterAction(BaseAction):
     """统一的图片生成动作，智能检测文生图或图生图"""
 
     # 激活设置
@@ -116,18 +118,20 @@ class MaisArtAction(BaseAction):
             self._api_clients[api_format] = client_class(self)
         return self._api_clients[api_format]
 
-    async def execute(self) -> Tuple[bool, Optional[str]]:
+    async def execute(self) -> Tuple[bool, str]:
         """执行统一图片生成动作"""
         logger.info(f"{self.log_prefix} 执行统一图片生成动作")
 
         # 懒启动自动自拍任务（如果插件初始化时事件循环未就绪）
         try:
-            from src.plugin_system.core.plugin_manager import plugin_manager
-            plugin_instance = plugin_manager.get_plugin_instance("mais_art_journal")
-            if plugin_instance and hasattr(plugin_instance, 'try_start_auto_selfie'):
-                plugin_instance.try_start_auto_selfie()
-        except Exception:
-            pass
+            from src.plugin_system.core.plugin_manager import plugin_manager  # pyright: ignore[reportMissingImports]
+            plugin_instance = plugin_manager.get_plugin_instance("selfie_painter_v2")
+            if plugin_instance:
+                startup_handler = getattr(plugin_instance, "try_start_auto_selfie", None)
+                if callable(startup_handler):
+                    startup_handler()
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            logger.debug(f"{self.log_prefix} 自动自拍懒启动检查失败（将忽略）: {exc}")
 
         # 检查是否是 /dr 命令消息，如果是则跳过（由 Command 组件处理）
         if self.action_message and self.action_message.processed_plain_text:
@@ -137,7 +141,7 @@ class MaisArtAction(BaseAction):
                 return False, "跳过 /dr 命令"
 
         # 检查插件是否在当前聊天流启用
-        global_enabled = self.get_config("plugin.enabled", True)
+        global_enabled: bool = bool(self.get_config("plugin.enabled", True))
         if not runtime_state.is_plugin_enabled(self.chat_id, global_enabled):
             logger.info(f"{self.log_prefix} 插件在当前聊天流已禁用")
             return False, "插件已禁用"
@@ -153,7 +157,8 @@ class MaisArtAction(BaseAction):
         free_hand_action = self.action_data.get("free_hand_action", "").strip()
 
         # 自拍风格优先级：运行时命令设置 > LLM 指定 > 全局配置
-        global_style = self.get_config("selfie.default_style", "standard")
+        global_style_raw: object = self.get_config("selfie.default_style", "standard")
+        global_style: str = global_style_raw if isinstance(global_style_raw, str) and global_style_raw else "standard"
         runtime_style = runtime_state.get_selfie_style(self.chat_id, None)
         if runtime_style is not None:
             selfie_style = runtime_style
@@ -164,7 +169,10 @@ class MaisArtAction(BaseAction):
 
         # 如果没有指定模型，使用运行时状态的默认模型
         if not model_id:
-            global_default = self.get_config("generation.default_model", "model1")
+            global_default_raw: object = self.get_config("generation.default_model", "model1")
+            global_default: str = (
+                global_default_raw if isinstance(global_default_raw, str) and global_default_raw else "model1"
+            )
             model_id = runtime_state.get_action_default_model(self.chat_id, global_default)
 
         # 检查模型是否在当前聊天流启用
@@ -191,12 +199,23 @@ class MaisArtAction(BaseAction):
             logger.info(f"{self.log_prefix} 图片描述过长，已截断至1000字符")
 
         # 提示词优化（自拍模式仅优化场景/环境，不生成角色外观）
-        optimizer_enabled = self.get_config("prompt_optimizer.enabled", True)
+        optimizer_enabled: bool = bool(self.get_config("prompt_optimizer.enabled", True))
         if optimizer_enabled:
             scene_only = bool(selfie_mode)
             mode_label = "场景提示词" if scene_only else "提示词"
             logger.info(f"{self.log_prefix} 开始优化{mode_label}: {description[:50]}...")
-            success, optimized_prompt = await optimize_prompt(description, self.log_prefix, scene_only=scene_only)
+            # 读取自定义 API 配置
+            custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
+            custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
+            custom_model: str = str(self.get_config("prompt_optimizer.custom_api_model", ""))
+            success, optimized_prompt = await optimize_prompt(
+                description,
+                self.log_prefix,
+                scene_only=scene_only,
+                custom_api_base_url=custom_base_url,
+                custom_api_key=custom_api_key,
+                custom_api_model=custom_model,
+            )
             if success:
                 logger.info(f"{self.log_prefix} {mode_label}优化完成: {optimized_prompt[:80]}...")
                 description = optimized_prompt
@@ -205,7 +224,7 @@ class MaisArtAction(BaseAction):
 
         # 验证strength参数
         try:
-            strength = float(strength)
+            strength = float(strength)  # pyright: ignore[reportArgumentType]
             if not (0.1 <= strength <= 1.0):
                 strength = 0.7
         except (ValueError, TypeError):
@@ -224,23 +243,21 @@ class MaisArtAction(BaseAction):
 
             # 尝试获取日程活动信息（增强场景上下文）
             activity_scene = None
-            global_selfie_schedule = self.get_config("selfie.schedule_enabled", True)
+            global_selfie_schedule: bool = bool(self.get_config("selfie.schedule_enabled", True))
             selfie_schedule_on = runtime_state.is_selfie_schedule_enabled(self.chat_id, global_selfie_schedule)
             if selfie_schedule_on:
                 try:
                     from .selfie.schedule_provider import get_schedule_provider
                     from .selfie.scene_action_generator import generate_scene_with_llm, get_action_for_activity
                     provider = get_schedule_provider()
-                    if provider:
-                        activity = await provider.get_current_activity()
-                        if activity:
-                            # 优先使用 LLM 生成场景（与自动自拍一致），失败时回退到确定性映射
-                            activity_scene = await generate_scene_with_llm(activity, selfie_style)
-                            if activity_scene:
-                                logger.info(f"{self.log_prefix} LLM 生成日程场景: {activity.activity_type.value}")
-                            else:
-                                activity_scene = get_action_for_activity(activity)
-                                logger.info(f"{self.log_prefix} LLM 失败，使用确定性映射: {activity.activity_type.value}")
+                    activity = await provider.get_current_activity()
+                    # 优先使用 LLM 生成场景，失败时回退到确定性映射
+                    activity_scene = await generate_scene_with_llm(activity, selfie_style)
+                    if activity_scene:
+                        logger.info(f"{self.log_prefix} LLM 生成日程场景: {activity.activity_type.value}")
+                    else:
+                        activity_scene = get_action_for_activity(activity)
+                        logger.info(f"{self.log_prefix} LLM 失败，使用确定性映射: {activity.activity_type.value}")
                 except Exception as e:
                     logger.debug(f"{self.log_prefix} 获取日程活动失败（非必要）: {e}")
 
@@ -280,7 +297,7 @@ class MaisArtAction(BaseAction):
             logger.info(f"{self.log_prefix} 未检测到输入图片，使用文生图模式")
             return await self._execute_unified_generation(description, model_id, size, None, None, extra_negative_prompt=extra_neg)
 
-    async def _execute_unified_generation(self, description: str, model_id: str, size: str, strength: float = None, input_image_base64: str = None, extra_negative_prompt: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+    async def _execute_unified_generation(self, description: str, model_id: str, size: str, strength: Optional[float] = None, input_image_base64: Optional[str] = None, extra_negative_prompt: Optional[str] = None) -> Tuple[bool, str]:
         """统一的图片生成执行方法
 
         Args:
@@ -316,7 +333,9 @@ class MaisArtAction(BaseAction):
             return False, "HTTP配置不完整"
 
         # API密钥验证（comfyui格式不需要API密钥）
-        if api_format != "comfyui" and ("YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key):
+        if api_format != "comfyui" and isinstance(http_api_key, str) and (
+            "YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key
+        ):
             error_msg = "图片生成功能尚未配置，请设置正确的API密钥。"
             await self.send_text(error_msg)
             logger.error(f"{self.log_prefix} API密钥未配置")
@@ -363,7 +382,7 @@ class MaisArtAction(BaseAction):
 
         try:
             # 对于 Gemini/Zai 格式，将原始 LLM 尺寸添加到 model_config 中
-            model_config = inject_llm_original_size(model_config, llm_original_size)
+            model_config = inject_llm_original_size(model_config, llm_original_size or "")
 
             # 获取重试次数配置
             max_retries = self.get_config("components.max_retries", 2)
@@ -380,7 +399,6 @@ class MaisArtAction(BaseAction):
             )
         except Exception as e:
             logger.error(f"{self.log_prefix} 异步请求执行失败: {e!r}", exc_info=True)
-            traceback.print_exc()
             success = False
             result = f"图片生成服务遇到意外问题: {str(e)[:100]}"
 
@@ -415,25 +433,38 @@ class MaisArtAction(BaseAction):
             await self.send_text(f"哎呀，{mode_text}时遇到问题：{result}")
             return False, f"{mode_text}失败: {result}"
 
-    def _get_model_config(self, model_id: str = None) -> Dict[str, Any]:
+    def _get_model_config(self, model_id: str | None = None) -> Dict[str, Any]:
         """获取指定模型的配置，支持热重载"""
         if not model_id:
-            model_id = self.get_config("generation.default_model", "model1")
-        default_model_id = self.get_config("generation.default_model", "model1")
+            model_id_raw: object = self.get_config("generation.default_model", "model1")
+            model_id = model_id_raw if isinstance(model_id_raw, str) and model_id_raw else "model1"
+        default_model_id_raw: object = self.get_config("generation.default_model", "model1")
+        default_model_id: str = (
+            default_model_id_raw if isinstance(default_model_id_raw, str) and default_model_id_raw else "model1"
+        )
         return get_model_config(self.get_config, model_id, default_model_id, self.log_prefix) or {}
 
     def _download_and_encode_base64(self, image_url: str) -> Tuple[bool, str]:
         """下载图片并转换为base64（带代理支持）"""
-        proxy_url = None
         if self.get_config("proxy.enabled", False):
             proxy_url = self.get_config("proxy.url", "http://127.0.0.1:7890")
-        return self.image_processor.download_and_encode_base64(image_url, proxy_url=proxy_url)
+            return self.image_processor.download_and_encode_base64(image_url, proxy_url=str(proxy_url))
+
+        # 下层实现的参数类型声明不是 Optional[str]，这里用空字符串表示“无代理”。
+        return self.image_processor.download_and_encode_base64(image_url, proxy_url="")
 
     def _validate_image_size(self, size: str) -> bool:
         """验证图片尺寸格式是否正确（委托给size_utils）"""
         return validate_image_size(size)
 
-    async def _process_selfie_prompt(self, description: str, selfie_style: str, free_hand_action: str, model_id: str, activity_scene: dict = None) -> Tuple[str, str]:
+    async def _process_selfie_prompt(
+        self,
+        description: str,
+        selfie_style: str,
+        free_hand_action: str,
+        model_id: str,
+        activity_scene: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, str]:
         """处理自拍模式的提示词生成
 
         Args:
@@ -452,18 +483,74 @@ class MaisArtAction(BaseAction):
         forced_subject = "(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)"
 
         # 2. 从独立的selfie配置中获取Bot的默认形象特征（不再从模型配置中获取）
-        bot_appearance = self.get_config("selfie.prompt_prefix", "").strip()
+        bot_appearance_raw: object = self.get_config("selfie.prompt_prefix", "")
+        bot_appearance = (bot_appearance_raw.strip() if isinstance(bot_appearance_raw, str) else "")
 
+        # 2.1 可选：注入衣柜系统选择的穿搭 prompt（只影响自拍，不影响 /dr 普通画图）
+        # 注入点要求：必须在 bot_appearance append 到 prompt_parts 之前完成。
+        try:
+            wardrobe_enabled: bool = bool(self.get_config("wardrobe.enabled", False))
+            if wardrobe_enabled:
+                from .wardrobe.selector import (
+                    build_simple_wardrobe_config,
+                    load_temp_override,
+                    select_outfit_from_schedule,
+                )
+                from .selfie.schedule_provider import get_schedule_provider
+
+                wardrobe_config_simple = build_simple_wardrobe_config(self.get_config)
+                current_override: str = await load_temp_override()
+
+                # 获取当前活动
+                try:
+                    provider = get_schedule_provider()
+                    current_activity = await provider.get_current_activity()
+                except Exception:
+                    current_activity = None
+
+                outfit_prompt: str = select_outfit_from_schedule(
+                    schedule_item=current_activity,
+                    wardrobe_config=wardrobe_config_simple,
+                    temp_override=current_override,
+                )
+
+                if outfit_prompt:
+                    logger.info(f"{self.log_prefix} 衣柜：选择穿搭 → {outfit_prompt}")
+                    if not bot_appearance:
+                        bot_appearance = outfit_prompt
+                    else:
+                        bot_appearance = f"{bot_appearance}, {outfit_prompt}"
+                else:
+                    logger.debug(f"{self.log_prefix} 衣柜：未匹配到穿搭")
+        except Exception as exc:
+            # 衣柜属于"增强项"，任何异常都不应影响自拍主流程
+            logger.warning(f"{self.log_prefix} 衣柜：注入穿搭失败，将忽略: {exc}")
         # 3. 定义自拍风格特定的场景设置
         if selfie_style == "mirror":
-            # 对镜自拍风格（适用于有镜子的室内场景）
-            selfie_scene = "mirror selfie, holding phone, reflection in mirror, bathroom, bedroom mirror, indoor"
+            # 对镜自拍风格：镜中出现拍照设备，全身或半身
+            selfie_scene = (
+                "mirror selfie, reflection in mirror, "
+                "holding phone in hand, phone visible, "
+                "looking at mirror, indoor scene"
+            )
         elif selfie_style == "photo":
-            # 第三人称照片风格（他人拍摄视角，自然姿态）
-            selfie_scene = "photo, candid shot, natural pose, looking away or at camera, full body or upper body"
+            # 第三人称照片风格：他人拍摄视角，自然姿态，不出现拍照设备
+            selfie_scene = (
+                "photo, candid shot, natural pose, "
+                "full body or upper body, "
+                "looking away or at camera, "
+                "(natural composition:1.2)"
+            )
         else:
-            # 标准自拍风格（适用于户外或无镜子场景，前置摄像头视角）
-            selfie_scene = "selfie, front camera view, arm extended, looking at camera"
+            # 标准自拍风格：前置摄像头视角，握持设备的手臂延伸到画面之外
+            selfie_scene = (
+                "selfie, front camera view, POV selfie, "
+                "(front facing selfie camera angle:1.3), "
+                "looking at camera, slight high angle selfie, "
+                "(phone-holding arm out of frame:1.3), "
+                "upper body shot, cowboy shot, "
+                "(centered composition:1.2)"
+            )
 
         # 4. 选择手部动作（优先级：LLM参数 > 日程场景 > LLM按描述生成 > 风格动作池兜底）
         if free_hand_action:
@@ -506,7 +593,26 @@ class MaisArtAction(BaseAction):
             if activity_scene.get("lighting"):
                 prompt_parts.append(activity_scene["lighting"])
 
-        prompt_parts.append(hand_action)
+        # 6. 手部动作处理：过滤不当词汇 + 按风格加权重
+        import re as _re
+        # standard 模式过滤手机类词汇（LLM 可能返回含 phone 的动作）
+        if selfie_style == "standard" and hand_action:
+            if _re.search(r"\b(phone|smartphone|mobile|device)\b", hand_action, flags=_re.IGNORECASE):
+                hand_action = "resting head on hand"
+
+        if hand_action:
+            if selfie_style == "standard":
+                hand_prompt = (
+                    f"(visible free hand {hand_action}:1.4), "
+                    "(only one hand visible in frame:1.5), "
+                    "(single hand gesture:1.3)"
+                )
+            elif selfie_style == "photo":
+                # 第三人称照片：自然动作，不需要手部强调
+                hand_prompt = f"({hand_action}:1.2)"
+            else:  # mirror
+                hand_prompt = f"({hand_action}:1.3)"
+            prompt_parts.append(hand_prompt)
 
         # 日程活动的环境（如果有，补充到自拍场景之前）
         if activity_scene and activity_scene.get("environment"):
@@ -515,7 +621,7 @@ class MaisArtAction(BaseAction):
         prompt_parts.append(selfie_scene)
         prompt_parts.append(description)
 
-        # 6. 合并并去重
+        # 7. 合并并去重
         final_prompt = ", ".join(prompt_parts)
 
         # 简单的去重处理（避免重复关键词）
@@ -532,15 +638,18 @@ class MaisArtAction(BaseAction):
 
         # 构建自拍负面提示词
         # 读取配置中的基础负面提示词
-        base_negative = self.get_config("selfie.negative_prompt", "").strip()
+        base_negative_raw: object = self.get_config("selfie.negative_prompt", "")
+        base_negative = base_negative_raw.strip() if isinstance(base_negative_raw, str) else ""
 
-        # 合并负面提示词：所有风格都加手部质量负面，standard 额外加防双手拿手机
+        # 合并负面提示词：所有风格都加手部质量负面，standard/photo 各有额外约束
         negative_parts = []
         if base_negative:
             negative_parts.append(base_negative)
         negative_parts.append(SELFIE_HAND_NEGATIVE)
         if selfie_style == "standard":
             negative_parts.append(ANTI_DUAL_PHONE_PROMPT)
+        elif selfie_style == "photo":
+            negative_parts.append(ANTI_CAMERA_DEVICE_PROMPT)
         selfie_negative_prompt = ", ".join(negative_parts)
 
         logger.info(f"{self.log_prefix} 自拍模式最终提示词: {final_prompt[:200]}...")
@@ -553,7 +662,7 @@ class MaisArtAction(BaseAction):
         "peace sign, v sign",
         "waving hand, friendly gesture",
         "thumbs up, positive gesture",
-        "finger heart, cute gesture",
+        "single hand heart gesture, cute gesture",
         "touching cheek gently, soft expression",
         "hand near chin, thinking pose",
         "one hand playing with hair, casual",
@@ -629,14 +738,14 @@ class MaisArtAction(BaseAction):
     ]
 
     @staticmethod
-    def _get_hand_actions_for_style(selfie_style: str) -> list:
+    def _get_hand_actions_for_style(selfie_style: str) -> list[str]:
         """根据自拍风格返回对应的手部动作池"""
         if selfie_style == "mirror":
-            return MaisArtAction._MIRROR_HAND_ACTIONS
+            return SelfiePainterAction._MIRROR_HAND_ACTIONS
         elif selfie_style == "photo":
-            return MaisArtAction._PHOTO_HAND_ACTIONS
+            return SelfiePainterAction._PHOTO_HAND_ACTIONS
         else:
-            return MaisArtAction._STANDARD_HAND_ACTIONS
+            return SelfiePainterAction._STANDARD_HAND_ACTIONS
 
     def _get_selfie_reference_image(self) -> Optional[str]:
         """获取自拍参考图片的base64编码
@@ -644,7 +753,8 @@ class MaisArtAction(BaseAction):
         Returns:
             图片的base64编码，如果不存在则返回None
         """
-        image_path = self.get_config("selfie.reference_image_path", "").strip()
+        image_path_raw: object = self.get_config("selfie.reference_image_path", "")
+        image_path = image_path_raw.strip() if isinstance(image_path_raw, str) else ""
         if not image_path:
             return None
 
@@ -667,9 +777,14 @@ class MaisArtAction(BaseAction):
             logger.error(f"{self.log_prefix} 加载自拍参考图片失败: {e}")
             return None
 
-    async def _schedule_auto_recall_for_recent_message(self, model_config: Dict[str, Any] = None, model_id: str = None, send_timestamp: float = 0.0):
+    async def _schedule_auto_recall_for_recent_message(
+        self,
+        model_config: Optional[Dict[str, Any]] = None,
+        model_id: Optional[str] = None,
+        send_timestamp: float = 0.0,
+    ):
         """安排最近发送消息的自动撤回"""
-        global_enabled = self.get_config("auto_recall.enabled", False)
+        global_enabled: bool = bool(self.get_config("auto_recall.enabled", False))
         if not global_enabled or not model_config:
             return
 
@@ -686,10 +801,10 @@ class MaisArtAction(BaseAction):
     async def _generate_image_only(
         self,
         description: str,
-        model_id: str = None,
+        model_id: Optional[str] = None,
         size: str = "",
-        strength: float = None,
-        input_image_base64: str = None,
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None,
         extra_negative_prompt: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
         """仅生成图片，不发送消息、不撤回、不缓存
@@ -709,7 +824,8 @@ class MaisArtAction(BaseAction):
             (success, image_data): success 为 True 时 image_data 是 base64 或 URL 字符串
         """
         if not model_id:
-            model_id = self.get_config("generation.default_model", "model1")
+            model_id_raw: object = self.get_config("generation.default_model", "model1")
+            model_id = model_id_raw if isinstance(model_id_raw, str) and model_id_raw else "model1"
 
         # 获取模型配置
         model_config = self._get_model_config(model_id)
@@ -731,7 +847,9 @@ class MaisArtAction(BaseAction):
             return False, "HTTP配置不完整"
         
         # API密钥验证（仅对需要api_key的格式）
-        if api_format != "comfyui" and ("YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key):
+        if api_format != "comfyui" and isinstance(http_api_key, str) and (
+            "YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key
+        ):
             return False, "API密钥未配置"
 
         # 合并额外负面提示词
@@ -744,7 +862,7 @@ class MaisArtAction(BaseAction):
             image_size = model_config.get("default_size", "1024x1024")
 
         # Gemini/Zai 尺寸处理
-        model_config = inject_llm_original_size(model_config, llm_original_size)
+        model_config = inject_llm_original_size(model_config, llm_original_size or "")
 
         max_retries = self.get_config("components.max_retries", 2)
 
@@ -786,9 +904,12 @@ class MaisArtAction(BaseAction):
             return ""
             
         # 获取消息文本
-        message_text = (self.action_message.processed_plain_text or
-                       self.action_message.display_message or
-                       self.action_message.raw_message or "").strip()
+        message_text = (
+            self.action_message.processed_plain_text
+            or self.action_message.display_message
+            or getattr(self.action_message, "raw_message", "")
+            or ""
+        ).strip()
         
         if not message_text:
             return ""
@@ -844,4 +965,3 @@ class MaisArtAction(BaseAction):
             cleaned_text = cleaned_text[:100]
             
         return cleaned_text
-

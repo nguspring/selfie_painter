@@ -1,13 +1,13 @@
 """OpenAI Chat Completions 格式API客户端
 
 通过 chat/completions 接口生成图片，适用于支持图片生成的 chat 模型。
+支持流式（SSE）和非流式响应，兼容 grok2api 等强制流式服务。
 多策略图片提取：Markdown图片链接、Data URI、Base64特征、URL。
 """
 import json
 import re
 import urllib.request
-import traceback
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 from .base_client import BaseApiClient, logger
 
@@ -26,8 +26,8 @@ class OpenAIChatClient(BaseApiClient):
         prompt: str,
         model_config: Dict[str, Any],
         size: str,
-        strength: float = None,
-        input_image_base64: str = None
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """发送 Chat Completions 格式的HTTP请求生成图片"""
         base_url = model_config.get("base_url", "")
@@ -78,6 +78,7 @@ class OpenAIChatClient(BaseApiClient):
         payload_dict = {
             "model": model,
             "messages": messages,
+            "stream": True,  # 启用流式以兼容强制流式服务（如 grok2api）
         }
 
         # 添加可选的生成参数
@@ -88,11 +89,10 @@ class OpenAIChatClient(BaseApiClient):
         # 某些模型支持 size 参数
         if size:
             payload_dict["size"] = size
-
         data = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Accept": "text/event-stream, application/json",
             "Authorization": f"{api_key}",
         }
 
@@ -100,8 +100,8 @@ class OpenAIChatClient(BaseApiClient):
         verbose_debug = False
         try:
             verbose_debug = self.action.get_config("components.enable_verbose_debug", False)
-        except Exception:
-            pass
+        except (AttributeError, TypeError, KeyError) as exc:
+            logger.debug(f"{self.log_prefix} (OpenAI-Chat) 读取详细调试开关失败，使用默认值: {exc}")
 
         if verbose_debug:
             safe_payload = payload_dict.copy()
@@ -153,27 +153,129 @@ class OpenAIChatClient(BaseApiClient):
 
             with opener.open(req, timeout=timeout) as response:
                 response_status = response.status
-                response_body_bytes = response.read()
-                response_body_str = response_body_bytes.decode("utf-8")
+                content_type = response.headers.get("Content-Type", "")
 
-                logger.info(f"{self.log_prefix} (OpenAI-Chat) 响应状态: {response_status}")
-
-                if verbose_debug:
-                    # 清理长 base64 数据用于日志
-                    cleaned = self._clean_log_content(response_body_str)
-                    logger.info(f"{self.log_prefix} (OpenAI-Chat) 详细调试 - 响应体: {cleaned[:500]}")
+                logger.info(f"{self.log_prefix} (OpenAI-Chat) 响应状态: {response_status}, Content-Type: {content_type}")
 
                 if 200 <= response_status < 300:
-                    response_data = json.loads(response_body_str)
-                    return self._extract_image_from_response(response_data)
+                    # 检测是否为 SSE 流式响应（优先通过 Content-Type 判断）
+                    is_sse = "text/event-stream" in content_type
+
+                    if is_sse:
+                        # SSE 流式响应：逐行读取避免 read() 返回空
+                        logger.info(f"{self.log_prefix} (OpenAI-Chat) 检测到 SSE 流式响应，开始逐行读取")
+                        sse_lines: list[str] = []
+                        for raw_line in response:
+                            line = raw_line.decode("utf-8", errors="replace")
+                            sse_lines.append(line)
+                        response_body_str = "".join(sse_lines)
+                    else:
+                        # 非流式响应：一次性读取
+                        response_body_bytes = response.read()
+                        response_body_str = response_body_bytes.decode("utf-8")
+
+                    if verbose_debug:
+                        cleaned = self._clean_log_content(response_body_str)
+                        logger.info(f"{self.log_prefix} (OpenAI-Chat) 详细调试 - 响应体: {cleaned[:500]}")
+
+                    stripped = response_body_str.strip()
+                    logger.info(f"{self.log_prefix} (OpenAI-Chat) 响应体长度: {len(stripped)}, 前200字符: {stripped[:200]}")
+
+                    if is_sse or stripped.startswith("data:") or stripped.startswith("event:"):
+                        # SSE 流式响应（grok2api 等服务强制返回流式）
+                        content = self._parse_sse_stream(stripped)
+                        if content:
+                            return self._extract_image_from_content(content)
+                        else:
+                            logger.error(f"{self.log_prefix} (OpenAI-Chat) SSE 流式响应中无有效内容")
+                            return False, "SSE 流式响应中未找到图片数据"
+                    else:
+                        # 普通 JSON 响应（非流式服务或服务端忽略了 stream 参数）
+                        response_data = json.loads(stripped)
+                        return self._extract_image_from_response(response_data)
                 else:
+                    response_body_bytes = response.read()
+                    response_body_str = response_body_bytes.decode("utf-8")
                     logger.error(f"{self.log_prefix} (OpenAI-Chat) API请求失败. 状态: {response_status}. 正文: {response_body_str[:300]}...")
                     return False, f"Chat API请求失败(状态码 {response_status})"
 
         except Exception as e:
             logger.error(f"{self.log_prefix} (OpenAI-Chat) 请求异常: {e!r}", exc_info=True)
-            traceback.print_exc()
             return False, f"Chat API请求异常: {str(e)[:100]}"
+    def _parse_sse_stream(self, raw_sse: str) -> str:
+        """解析 SSE（Server-Sent Events）流式响应，拼接所有 chunk 的 content
+
+        SSE 格式示例（OpenAI chat completion chunk）：
+            data: {"id":"xxx","object":"chat.completion.chunk","choices":[{"delta":{"content":"..."}}]}
+            data: [DONE]
+
+        Args:
+            raw_sse: 原始 SSE 响应文本
+
+        Returns:
+            拼接后的完整 content 文本
+        """
+        content_parts: list[str] = []
+
+        for line in raw_sse.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # 跳过 event: 行和其他非 data 行
+            if not line.startswith("data:"):
+                continue
+
+            data_str = line[len("data:"):].strip()
+
+            # 结束标记
+            if data_str == "[DONE]":
+                break
+
+            # 解析 JSON chunk
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                logger.debug(f"{self.log_prefix} (OpenAI-Chat) SSE 跳过无效 JSON: {data_str[:80]}")
+                continue
+
+            # 从 chunk 中提取 delta.content
+            try:
+                choices = chunk.get("choices", [])
+                if choices:
+                    delta = choices[0].get("delta", {})
+                    delta_content = delta.get("content", "")
+                    if delta_content:
+                        content_parts.append(delta_content)
+            except (IndexError, KeyError, TypeError):
+                pass
+
+        full_content = "".join(content_parts)
+        if full_content:
+            logger.info(f"{self.log_prefix} (OpenAI-Chat) SSE 解析完成，内容长度: {len(full_content)}")
+        return full_content
+
+    def _extract_image_from_content(self, content: str) -> Tuple[bool, str]:
+        """从拼接后的文本内容中提取图片数据
+
+        复用 _extract_image_from_response 的多策略提取逻辑，
+        但直接接收 content 字符串而非完整的 response_data dict。
+
+        Args:
+            content: 拼接后的完整文本（可能包含 Markdown 图片、URL、Base64 等）
+
+        Returns:
+            (成功标志, 图片数据或错误信息)
+        """
+        # 构造伪响应结构，复用已有提取逻辑
+        fake_response = {
+            "choices": [{
+                "message": {
+                    "content": content
+                }
+            }]
+        }
+        return self._extract_image_from_response(fake_response)
 
     def _extract_image_from_response(self, response_data: dict) -> Tuple[bool, str]:
         """从 chat/completions 响应中提取图片数据
