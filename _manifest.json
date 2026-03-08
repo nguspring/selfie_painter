@@ -7,7 +7,7 @@
     "name": "Ptrel，Rabbit-Jia-Er，saberlights Kiuon，nguspring",
     "url": "https://github.com/nguspring/selfie_painter"
   },
-  "license": "GPL-v3.0-or-later",
+  "license": "AGPL-3.0",
   "host_application": {
     "min_version": "0.10.0"
   },

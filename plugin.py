@@ -2130,9 +2130,17 @@ class SelfiePainterV2Plugin(BasePlugin):
                     fields[field_name] = ConfigField(**field_kwargs)
                 self_any.config_schema[section_key] = fields
             else:
-                # model1（或已存在的节）已在类属性里定义好了，
-                # 只更新 config_section_descriptions 里的标题用真实 name 值
-                pass  # section_descriptions 已在上面 3a 更新了
+                # model1-5（或已存在的节）已在类属性里定义好了，
+                # 用 config.toml 里的实际值覆盖 ConfigField.default，
+                # 否则 WebUI 会显示类属性里的硬编码模板默认值而非用户实际配置
+                if raw_config and isinstance(raw_config.get("models"), dict):
+                    model_data = raw_config["models"].get(key, {})
+                    if isinstance(model_data, dict):
+                        existing_fields = self_any.config_schema[section_key]
+                        if isinstance(existing_fields, dict):
+                            for field_name, field_obj in existing_fields.items():
+                                if isinstance(field_obj, ConfigField) and field_name in model_data:
+                                    field_obj.default = model_data[field_name]
 
         # ── 4. 更新 config_layout 里 models 标签页的 sections ──
         # 找到 id="models" 的 tab，重写其 sections 列表

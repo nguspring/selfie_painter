@@ -7,23 +7,59 @@
 <p align="center">
   <img src="https://img.shields.io/badge/版本-v3.6.0--dev-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
-  <img src="https://img.shields.io/badge/License-GPL--3.0-orange" alt="License">
+  <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
 
 ---
 
-> ⚠️ **修改版说明**
+> 🚀 **从 v3.5.x 升级到 v3.6.0？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v360)。
+
+---
+
+> **📌 关于本仓库**
 >
-> 本仓库为原版 custom_pic_plugin 插件的**修改版**，由 nguspring 维护。
+> 本仓库是 nguspring 维护的**改版**画图插件，发展脉络如下：
 >
-> | 项目 | 信息 |
+> 1. 最初基于原版 [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) 修改，发布为 `selfie_painter`（v3.4.x ~ v3.5.x）
+> 2. 原作者后来将 custom_pic_plugin 升级重构为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)（v3.4.0）
+> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.0）
+>
+> | 项目 | 链接 |
 > |------|------|
-> | 原版仓库 | https://github.com/1021143806/custom_pic_plugin |
-> | 修改版仓库 | https://github.com/nguspring/selfie_painter |
+> | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
+> | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
 > | 当前版本 | v3.6.0-dev |
-> | 上游合并版 | 基于 [mais-art-journal](https://github.com/1021143806/mais-art-journal) 合并重构 |
 >
-> **修改版定位**：在原版强大画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**三种自拍模式**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
+> **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
+
+---
+
+## 🔄 从 v3.5.x 升级到 v3.6.0
+
+v3.6.0 对代码结构、插件名称和配置格式做了**大幅重构**，与 v3.5.x **不兼容**。
+
+**请删除旧版插件目录后重新安装：**
+
+```shell
+cd MaiBot/plugins
+# 1. 删除旧版目录（如有需要请先手动备份 config.toml）
+rm -rf selfie_painter
+# 2. 重新安装
+git clone https://github.com/nguspring/selfie_painter.git -b dev
+```
+
+重启 MaiBot 后会自动生成默认 `config.toml`，按 [新手快速配置指南](#-新手快速配置指南) 配置即可。
+
+> ⚠️ 旧版 `config.toml` 的配置项名称和结构已大幅变动，无法直接复用。建议参考旧配置手动填写新配置中对应的 API 密钥和模型信息。
+---
+
+## ⚠️ 已知问题
+
+| 问题 | 状态 | 说明 |
+|------|------|------|
+| grok2api 通过 `openai-chat` 接口生图不稳定 | 🔧 修复中 | 部分 grok2api 实例可以正常生图，部分不行。正在尽力排查兼容性问题 |
+
+---
 
 ## 💡 插件定位
 
@@ -119,7 +155,7 @@
 插件自带日程管理，不再依赖外部 `autonomous_planning` 插件。
 
 - 每日自动通过 LLM 生成当天日程（可配置生成时间和模型）
-- LLM 不可用时自动使用工作日/周末兆底模板
+- LLM 不可用时自动使用工作日/周末兜底模板
 - 日程数据存储在本地 SQLite 数据库（`data/schedule.db`）
 - 在 LLM 生成聊天回复前自动注入麦麦当前活动信息
 - 支持 smart（按时间/消息数节流）和 always 两种注入模式
@@ -205,9 +241,9 @@ model = "cancel13/liaocao"
 | 术语 | 通俗解释 | 推荐值 |
 |------|----------|--------|
 | **seed（随机种子）** | `-1` 每次不同，固定值可复现 | `-1` |
-| **guidance_scale（引导强度）** | 值越高越“听话”，太高会生硬 | `2.5-7.5` |
+| **guidance_scale（引导强度）** | 值越高越"听话"，太高会生硬 | `2.5-7.5` |
 | **num_inference_steps（推理步数）** | 步数越多越精细，但更慢 | `20-50` |
-| **negative_prompt（负面提示词）** | 告诉 AI “不要画什么” | `lowres, bad anatomy, text` |
+| **negative_prompt（负面提示词）** | 告诉 AI "不要画什么" | `lowres, bad anatomy, text` |
 
 ---
 
@@ -243,7 +279,7 @@ enable_verbose_debug = false      # 打印完整请求/响应报文
 name = "我的模型"
 base_url = "https://api.siliconflow.cn/v1"
 api_key = "Bearer sk-xxx"
-format = "openai"                          # 见上文“多 API 格式支持”
+format = "openai"                          # 见上文"多 API 格式支持"
 model = "Kwai-Kolors/Kolors"
 fixed_size_enabled = false
 default_size = "1024x1024"
@@ -416,11 +452,12 @@ num_inference_steps = 30
 
 感谢以下开发者为本插件做出的贡献：
 
-- **原作者**：1021143806 (Ptrel) - 创建了原版 custom_pic_plugin 插件
-- **Rabbit-Jia-Er** - 添加了多模型调用和命令功能
-- **saberlights Kiuon** - 添加了自拍功能和自然语言命令功能
-- **A-Dawn** - 感谢对代码问题排查提供的思路，以及 A_MIND 插件带来的灵感启发；感谢提供反重力反代 gemini-3-pro-image 无法使用问题的热修复补丁
-- **XXXxx7258** - 感谢 Mai_Only_You 插件带来的灵感启发
+- **原作者**：1021143806 (Ptrel) — 创建了原版 custom_pic_plugin 插件（现 mais-art-journal）
+- **Rabbit-Jia-Er** — 添加了多模型调用和命令功能
+- **saberlights Kiuon** — 添加了自拍功能和自然语言命令功能
+- **A-Dawn** — 感谢对代码问题排查提供的思路，以及 A_MIND 插件带来的灵感启发；感谢提供反重力反代 gemini-3-pro-image 无法使用问题的热修复补丁
+- **XXXxx7258** — 感谢 Mai_Only_You 插件带来的灵感启发
+- **xuqian13** — 内置日程系统基于 [autonomous_planning_plugin](https://github.com/xuqian13/autonomous_planning_plugin) 的设计思路
 
 本插件搜图功能部分代码来自于 https://github.com/XXXxx7258/google_search_plugin
 
@@ -430,50 +467,60 @@ num_inference_steps = 30
 
 ## 📝 更新日志
 
-### v3.6.0 (修改版) - 2026-03-07
+### v3.6.0 (改版) — 2026-03-07
 
 **🌟 大版本重构：合并上游 mais-art-journal + 多项新功能**
 
-本版本基于上游 [mais-art-journal](https://github.com/1021143806/mais-art-journal) 进行合并重构，引入大量架构升级和新功能。
+本版本基于上游 [mais-art-journal](https://github.com/1021143806/mais-art-journal) 进行合并重构，同时引入大量改版独有的新功能。
 
-**🏗️ 架构重构**：
-- 🔧 **API 客户端模块化**：`core/api_clients/` 目录重构，引入 `BaseApiClient` 基类统一接口，每个 API 格式独立文件
+#### 合并自上游 mais-art-journal
+
+以下功能来自原作者的 mais-art-journal，本版本合并并适配：
+
+- 🔧 **API 客户端模块化**：`core/api_clients/` 引入 `BaseApiClient` 基类，每个 API 格式独立文件
 - 🔧 **自拍系统模块化**：`core/selfie/` 目录，提示词常量、场景动作生成器独立管理
-- 🔧 **日程系统独立**：`core/schedule/` 目录，不再依赖外部 `autonomous_planning` 插件
-- 🔧 **衣柜系统独立**：`core/wardrobe/` 目录，全新的穿搭管理系统
-- 🔧 **工具函数整理**：`core/utils/` 目录，共享常量和工具函数
-
-**🆕 新功能**：
 - 🆕 **ComfyUI 支持**：新增 `comfyui` 格式，支持本地/远程 ComfyUI 工作流 JSON 加载和占位符替换
-- 🆕 **SSE 流式响应**：`openai-chat` 格式支持 SSE 流式解析，兼容 grok2api 等强制流式服务
 - 🆕 **photo 自拍模式**：新增第三人称照片模式，与 standard/mirror 并列
-- 🆕 **衣柜系统**：`[wardrobe]` 配置，支持每日随机穿搭、场景自动换装、管理员临时穿搭
-- 🆕 **内置日程系统**：LLM 生成每日日程 + SQLite 持久化 + POST_LLM 自动注入 + `/schedule` 命令
+- 🔧 角色参考图命令（`/dr refresh`、`/dr status`、`/dr clear`）
+
+#### 改版新增功能（nguspring）
+
+以下功能为本改版独有，不存在于上游：
+
+- 🆕 **内置日程系统**：完整的日程管理模块（`core/schedule/`，含 LLM 生成器、人设构建器、质量评估器、SQLite 持久化、兜底模板等 10 个文件）
 - 🆕 **日程人设驱动**：日程生成读取麦麦人设配置（性格、兴趣、生活规律）
 - 🆕 **日程历史记忆**：参考昨天日程，让日程有连续性
 - 🆕 **日程质量评分**：多轮生成优化，质量不达标自动重试
-- 🆕 **日程智能注入**：意图识别 + 对话上下文缓存，避免不相关场景注入
+- 🆕 **日程智能注入**：意图识别 + 对话上下文缓存，避免不相关场景注入（`core/inject/`，5 个文件）
+- 🆕 **衣柜系统**：`[wardrobe]` 配置，每日随机穿搭、场景自动换装、管理员临时穿搭（`core/wardrobe/`）
+- 🆕 **SSE 流式响应**：`openai-chat` 格式支持 SSE 流式解析，兼容 grok2api 等强制流式服务
 - 🆕 **衣柜命令**：`/dr wardrobe list/status/wear/help`，中文别名 `/dr 衣柜`
 - 🆕 **日程命令**：`/schedule`、`/schedule regen`
+- 🆕 **代理配置**：新增 `[proxy]` 配置段
+- 🆕 **提示词优化器自定义 API**：支持 `custom_api_base_url`、`custom_api_key`、`custom_model` 配置
+- 🆕 **自动自拍目标群/用户**：`send_to_chat` 配置 `target_groups`/`target_users`（替代旧版 `chat_id_list`）
 
-**🔧 改进**：
+#### 其他改进
+
 - 🔧 **自拍三模式提示词修复**：修复 standard/mirror/photo 提示词冲突
 - 🔧 **衣柜持久化**：临时穿搭存储到 `schedule.db`，重启不丢失
-- 🔧 **许可证变更**：从 AGPL-3.0 迁移至 GPL-3.0-or-later
+- 🔧 **许可证信息统一**：当前发布材料统一为 AGPL-3.0
+- 🔧 **工具函数整理**：`core/utils/` 目录，共享常量和工具函数
 
-**⚠️ 破坏性变更**：
+#### ⚠️ 破坏性变更
+
 - ⚠️ 代码结构大幅重构，直接替换旧版文件可能不兼容
-- ⚠️ 部分旧配置项已移除或重命名，首次启动时会自动迁移
+- ⚠️ 部分旧配置项已移除或重命名，请删除旧版后重新安装（详见 [升级指南](#-从-v35x-升级到-v360)）
 
 ---
 
 <details>
 <summary>📜 v3.5.x 历史更新日志（点击展开）</summary>
 
-### v3.5.2 (修改版) - 2026-02-01
+### v3.5.2 (修改版) — 2026-02-01
 
 - 🐛 修复日程生成 `parse_failed`：使用 `JSONDecoder.raw_decode` 提取完整 JSON 数组
-- ✅ 日程生成 fallback 时必落“失败包”
+- ✅ 日程生成 fallback 时必落"失败包"
 - ✅ 人设变更触发当日日程自动重生成（基于签名）
 - ✅ 跨天去重：保留最近 N 天日程文件并回灌摘要到 prompt
 - ✅ fallback 模板升级为多套（base+variant）
@@ -481,11 +528,11 @@ num_inference_steps = 30
 - ✅ 配文贴图：图片生成后做 VLM 视觉摘要注入配文
 - ✅ 叙事连贯：发送成功后更新 `DailyNarrativeState`
 
-### v3.5.1 (修改版) - 2026-01-25
+### v3.5.1 (修改版) — 2026-01-25
 
 - 🐛 修复回退日程错位：改为按时间接近度智能匹配
 
-### v3.5.0 (修改版) - 2026-01-24
+### v3.5.0 (修改版) — 2026-01-24
 
 - 🌟 智能日程模式 (Smart Mode)
 - 📝 配文多样化（5种类型）
@@ -538,17 +585,18 @@ num_inference_steps = 30
 
 ## 插件开发历程
 
-- 该插件基于 MaiBot 最早期官方豆包生图示例插件修改而来
-- MaiBot 0.8 版本更新，根据新插件系统进行重构
-- Rabbit-Jia-Er 加入，添加可以调用多个模型和命令功能
-- saberlights Kiuon 加入，添加自拍功能和自然语言命令功能
-- nguspring 加入，日程系统重大升级（人设驱动、历史记忆、多轮生成、智能注入）
-- v3.6.0 合并上游 mais-art-journal 重构，新增 ComfyUI、衣柜系统、SSE 流式等
+1. 最初基于 MaiBot 早期官方豆包生图示例插件修改而来
+2. MaiBot 0.8 版本更新，根据新插件系统进行重构
+3. Rabbit-Jia-Er 加入，添加多模型调用和命令功能
+4. saberlights Kiuon 加入，添加自拍功能和自然语言命令功能
+5. 原作者将 custom_pic_plugin 升级为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)
+6. nguspring 加入，基于原版开发修改版 selfie_painter（v3.4.x ~ v3.5.x）：日程系统重大升级（人设驱动、历史记忆、多轮生成、智能注入）
+7. v3.6.0：基于 mais-art-journal 合并重构为 selfie_painter_v2，新增衣柜系统、SSE 流式等
 
 ## 🔗 版权信息
 
 - 作者：nguspring
-- 许可证：GPL-3.0-or-later
+- 许可证：AGPL-3.0
 - 项目主页：https://github.com/nguspring/selfie_painter
 
 ## 贡献和反馈
