@@ -3,27 +3,18 @@
 梦羽AI图片生成服务 API
 支持多种模型，包括Qwen Image Edit版模型用于图生图
 """
-
 import json
 import base64
-import requests
 from typing import Dict, Any, Tuple, Optional
 
-from .base_client import BaseApiClient, logger
-from ..size_utils import parse_pixel_size
+from .base_client import BaseApiClient, logger, get_requests_module
+from ..utils import parse_pixel_size
 
 
 class MengyuaiClient(BaseApiClient):
     """梦羽AI API客户端"""
 
     format_name = "mengyuai"
-
-    # 模型索引映射
-    MODEL_INDEX = {
-        "default": 0,
-        "qwen_image_edit": 16,  # Qwen Image Edit版模型，用于图生图
-        "qwen_image_edit_2": 17,  # Qwen Image Edit版(服务器2)
-    }
 
     def _make_request(
         self,
@@ -34,17 +25,21 @@ class MengyuaiClient(BaseApiClient):
         input_image_base64: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """发送梦羽AI格式的HTTP请求生成图片"""
+        requests = get_requests_module()
         try:
             # API配置
-            base_url = model_config.get("base_url", "https://sd.exacg.cc").rstrip("/")
-            api_key = model_config.get("api_key", "")
+            base_url = model_config.get("base_url", "https://sd.exacg.cc").rstrip('/')
+            api_key = model_config.get("api_key", "").replace("Bearer ", "")
 
             if not api_key or api_key in ["YOUR_API_KEY", "xxxxxx"]:
                 logger.error(f"{self.log_prefix} (梦羽AI) API密钥未配置")
                 return False, "API密钥未配置"
 
             # 请求头
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
 
             # 获取模型特定的配置参数
             custom_prompt_add = model_config.get("custom_prompt_add", "")
@@ -65,11 +60,10 @@ class MengyuaiClient(BaseApiClient):
 
             # 如果有输入图片，使用Qwen Image Edit模型
             if input_image_base64:
-                # 使用图生图模型 (默认 model_index=16 是 Qwen Image Edit版)
-                request_data["model_index"] = model_config.get("img2img_model_index", 16)
+                # 使用图生图模型 (默认 model_index=19 是 Qwen Image Edit版)
+                request_data["model_index"] = model_config.get("img2img_model_index", 19)
 
-                # 需要提供图片URL，这里我们需要先将base64转为可访问的URL
-                # 梦羽AI要求image_source是可访问的URL
+                # 梦羽AI要求 image_source 是可公网访问的URL
                 # 检查是否配置了图片上传服务
                 image_upload_url = model_config.get("image_upload_url")
 
@@ -79,13 +73,15 @@ class MengyuaiClient(BaseApiClient):
                     if image_url:
                         request_data["image_source"] = image_url
                     else:
-                        logger.warning(f"{self.log_prefix} (梦羽AI) 图片上传失败，使用文生图模式")
+                        logger.warning(f"{self.log_prefix} (梦羽AI) 图片上传失败，降级为文生图模式")
                         request_data["model_index"] = model_index
                 else:
-                    # 尝试使用data URI（可能不被支持）
+                    logger.warning(
+                        f"{self.log_prefix} (梦羽AI) 未配置 image_upload_url，"
+                        "梦羽AI图生图需要可公网访问的图片URL。将尝试 data URI 但可能不被支持"
+                    )
                     image_data_uri = self._prepare_image_data_uri(input_image_base64)
                     request_data["image_source"] = image_data_uri
-                    logger.info(f"{self.log_prefix} (梦羽AI) 使用图生图模式")
             else:
                 # 文生图模式，添加完整参数
                 request_data["negative_prompt"] = negative_prompt
@@ -107,11 +103,14 @@ class MengyuaiClient(BaseApiClient):
                 "url": endpoint,
                 "headers": headers,
                 "json": request_data,
-                "timeout": proxy_config.get("timeout", 120) if proxy_config else 120,
+                "timeout": proxy_config.get('timeout', 120) if proxy_config else 120
             }
 
             if proxy_config:
-                request_kwargs["proxies"] = {"http": proxy_config["http"], "https": proxy_config["https"]}
+                request_kwargs["proxies"] = {
+                    "http": proxy_config["http"],
+                    "https": proxy_config["https"]
+                }
 
             # 发送请求
             response = requests.post(**request_kwargs)
@@ -175,9 +174,9 @@ class MengyuaiClient(BaseApiClient):
                         return False, "图片下载失败"
 
                 # 尝试直接返回响应内容（可能是二进制图片）
-                content_type = response.headers.get("Content-Type", "")
-                if "image" in content_type:
-                    image_base64 = base64.b64encode(response.content).decode("utf-8")
+                content_type = response.headers.get('Content-Type', '')
+                if 'image' in content_type:
+                    image_base64 = base64.b64encode(response.content).decode('utf-8')
                     logger.info(f"{self.log_prefix} (梦羽AI) 图片生成成功 (binary)")
                     return True, image_base64
 
@@ -186,18 +185,14 @@ class MengyuaiClient(BaseApiClient):
 
             except json.JSONDecodeError:
                 # 可能直接返回的是图片
-                content_type = response.headers.get("Content-Type", "")
-                if "image" in content_type:
-                    image_base64 = base64.b64encode(response.content).decode("utf-8")
+                content_type = response.headers.get('Content-Type', '')
+                if 'image' in content_type:
+                    image_base64 = base64.b64encode(response.content).decode('utf-8')
                     logger.info(f"{self.log_prefix} (梦羽AI) 图片生成成功 (直接返回)")
                     return True, image_base64
 
                 logger.error(f"{self.log_prefix} (梦羽AI) 响应解析失败")
                 return False, "响应解析失败"
-
-        except requests.RequestException as e:
-            logger.error(f"{self.log_prefix} (梦羽AI) 网络请求异常: {e}")
-            return False, f"网络请求失败: {str(e)}"
 
         except Exception as e:
             logger.error(f"{self.log_prefix} (梦羽AI) 请求异常: {e!r}", exc_info=True)
@@ -209,7 +204,7 @@ class MengyuaiClient(BaseApiClient):
         default_height = model_config.get("default_height", 512)
         return parse_pixel_size(size, default_width, default_height)
 
-    def _download_image(self, url: str, proxy_config: Optional[Dict[str, Any]] = None) -> str:
+    def _download_image(self, url: str, proxy_config: Dict[str, Any] = None) -> str:
         """下载图片并转换为base64
 
         Args:
@@ -219,16 +214,20 @@ class MengyuaiClient(BaseApiClient):
         Returns:
             图片的base64编码，失败返回空字符串
         """
+        requests = get_requests_module()
         try:
             request_kwargs = {"url": url, "timeout": 30}
 
             if proxy_config:
-                request_kwargs["proxies"] = {"http": proxy_config["http"], "https": proxy_config["https"]}
+                request_kwargs["proxies"] = {
+                    "http": proxy_config["http"],
+                    "https": proxy_config["https"]
+                }
 
             response = requests.get(**request_kwargs)
 
             if response.status_code == 200:
-                return base64.b64encode(response.content).decode("utf-8")
+                return base64.b64encode(response.content).decode('utf-8')
 
         except Exception as e:
             logger.error(f"{self.log_prefix} (梦羽AI) 图片下载失败: {e}")
@@ -246,13 +245,18 @@ class MengyuaiClient(BaseApiClient):
         Returns:
             图片URL，失败返回空字符串
         """
+        requests = get_requests_module()
         try:
             # 将base64转为bytes
             image_bytes = base64.b64decode(self._get_clean_base64(image_base64))
 
-            headers = {"Authorization": f"Bearer {api_key}"}
+            headers = {
+                "Authorization": f"Bearer {api_key}"
+            }
 
-            files = {"file": ("image.png", image_bytes, "image/png")}
+            files = {
+                "file": ("image.png", image_bytes, "image/png")
+            }
 
             response = requests.post(upload_url, headers=headers, files=files, timeout=30)
 

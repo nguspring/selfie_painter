@@ -2,7 +2,7 @@
 
 from typing import Dict, Any, Tuple, Optional
 
-from .base_client import BaseApiClient, logger
+from .base_client import BaseApiClient, NonRetryableError, logger
 
 
 class DoubaoClient(BaseApiClient):
@@ -22,7 +22,7 @@ class DoubaoClient(BaseApiClient):
         try:
             # 尝试导入豆包SDK
             try:
-                from volcenginesdkarkruntime import Ark  # type: ignore
+                from volcenginesdkarkruntime import Ark
             except ImportError:
                 logger.error(
                     f"{self.log_prefix} (Doubao) 缺少volcenginesdkarkruntime库，请安装: pip install 'volcengine-python-sdk[ark]'"
@@ -60,6 +60,15 @@ class DoubaoClient(BaseApiClient):
                 "watermark": model_config.get("watermark", True),
             }
 
+            # 添加可选参数
+            seed = model_config.get("seed")
+            if seed is not None and seed != -1:
+                request_params["seed"] = seed
+
+            guidance_scale = model_config.get("guidance_scale")
+            if guidance_scale is not None:
+                request_params["guidance_scale"] = guidance_scale
+
             # 如果有输入图片，需要特殊处理
             if input_image_base64:
                 image_data_uri = self._prepare_image_data_uri(input_image_base64)
@@ -79,5 +88,16 @@ class DoubaoClient(BaseApiClient):
                 return False, "豆包API响应成功但未返回图片"
 
         except Exception as e:
+            error_str = str(e)
+            # 内容审核拒绝等永久性错误，不应重试
+            non_retryable_codes = [
+                "OutputImageSensitiveContentDetected",
+                "InputImageSensitiveContentDetected",
+                "ImageSensitiveContentDetected",
+                "ContentFilterBlocked",
+            ]
+            for code in non_retryable_codes:
+                if code in error_str:
+                    raise NonRetryableError(f"豆包内容审核拒绝: {error_str[:100]}") from e
             logger.error(f"{self.log_prefix} (Doubao) 请求异常: {e!r}", exc_info=True)
-            return False, f"豆包API请求失败: {str(e)[:100]}"
+            return False, f"豆包API请求失败: {error_str[:100]}"

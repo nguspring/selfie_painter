@@ -1,19 +1,23 @@
-"""OpenAI Chat 格式 API 客户端
-专门用于处理通过 chat/completions 接口生成图片的供应商 (如 Nano Banana, OpenRouter, Claude 等)
-支持从混合文本或 Markdown 中提取图片 URL 或 Base64 数据
-"""
+"""OpenAI Chat Completions 格式API客户端
 
+通过 chat/completions 接口生成图片，适用于支持图片生成的 chat 模型。
+支持流式（SSE）和非流式响应，兼容 grok2api 等强制流式服务。
+多策略图片提取：Markdown图片链接、Data URI、Base64特征、URL。
+"""
 import json
 import re
 import urllib.request
 from typing import Dict, Any, Tuple, Optional
 
 from .base_client import BaseApiClient, logger
-from ..size_utils import pixel_size_to_gemini_aspect
 
 
 class OpenAIChatClient(BaseApiClient):
-    """基于 Chat Completion 的图片生成客户端"""
+    """OpenAI Chat Completions 格式API客户端
+
+    通过 /chat/completions 端点请求图片生成，
+    从模型的文本响应中提取图片数据。
+    """
 
     format_name = "openai-chat"
 
@@ -25,228 +29,332 @@ class OpenAIChatClient(BaseApiClient):
         strength: Optional[float] = None,
         input_image_base64: Optional[str] = None,
     ) -> Tuple[bool, str]:
-        """发送 chat/completions 请求并解析图片"""
-        base_url = model_config.get("base_url", "").rstrip("/")
+        """发送 Chat Completions 格式的HTTP请求生成图片"""
+        base_url = model_config.get("base_url", "")
         api_key = model_config.get("api_key", "")
         model = model_config.get("model", "")
 
-        # 默认为 chat/completions，如果 base_url 已经包含路径则尝试适配
-        if "/chat/completions" not in base_url and not base_url.endswith("/completions"):
-            endpoint = f"{base_url}/chat/completions"
-        else:
-            endpoint = base_url
+        endpoint = f"{base_url.rstrip('/')}/chat/completions"
 
-        # 组装 prompt
+        # 获取模型特定的配置参数
         custom_prompt_add = model_config.get("custom_prompt_add", "")
+        negative_prompt_add = model_config.get("negative_prompt_add", "")
         full_prompt = prompt + custom_prompt_add
 
-        # 构造消息内容
-        contents = [{"type": "text", "text": full_prompt}]
+        # 如果有负面提示词，追加到提示中
+        if negative_prompt_add:
+            full_prompt += f"\n\nNegative prompt (avoid these): {negative_prompt_add}"
 
-        # 如果有输入图片，添加图生图支持 (兼容 Vision 格式)
+        # 构建 chat messages
+        messages = []
+
+        # 系统消息：指导模型生成图片
+        system_content = (
+            "You are an image generation assistant. Generate an image based on the user's description. "
+            f"Target image size: {size}."
+        )
+        messages.append({"role": "system", "content": system_content})
+
+        # 用户消息
+        user_content_parts = []
+
+        # 如果有输入图片（图生图场景），添加图片
         if input_image_base64:
             image_data_uri = self._prepare_image_data_uri(input_image_base64)
-            contents.append({"type": "image_url", "image_url": {"url": image_data_uri}})
+            user_content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": image_data_uri}
+            })
+            strength_text = f" (modification strength: {strength})" if strength else ""
+            user_content_parts.append({
+                "type": "text",
+                "text": f"Please modify this image based on the following description{strength_text}: {full_prompt}"
+            })
+            messages.append({"role": "user", "content": user_content_parts})
+        else:
+            messages.append({"role": "user", "content": f"Please generate an image: {full_prompt}"})
 
-        messages = [{"role": "user", "content": contents if len(contents) > 1 else full_prompt}]
-
-        payload = {
+        # 构建请求体
+        payload_dict = {
             "model": model,
             "messages": messages,
-            "stream": False,
+            "stream": True,  # 启用流式以兼容强制流式服务（如 grok2api）
         }
 
-        # 适配 Gemini/Nano Banana 风格的参数
-        image_config = self._build_gemini_style_config(model_config, size)
-        payload.update(image_config)
-
-        # 基础参数
-        seed = model_config.get("seed")
+        # 添加可选的生成参数
+        seed = model_config.get("seed", -1)
         if seed is not None and seed != -1:
-            payload["seed"] = seed
+            payload_dict["seed"] = seed
+
+        # 某些模型支持 size 参数
+        if size:
+            payload_dict["size"] = size
+        data = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream, application/json",
+            "Authorization": f"{api_key}",
+        }
+
+        # 详细调试信息
+        verbose_debug = False
+        try:
+            verbose_debug = self.action.get_config("components.enable_verbose_debug", False)
+        except (AttributeError, TypeError, KeyError) as exc:
+            logger.debug(f"{self.log_prefix} (OpenAI-Chat) 读取详细调试开关失败，使用默认值: {exc}")
+
+        if verbose_debug:
+            safe_payload = payload_dict.copy()
+            # 清理敏感数据
+            if "messages" in safe_payload:
+                safe_msgs = []
+                for msg in safe_payload["messages"]:
+                    if isinstance(msg.get("content"), list):
+                        safe_parts = []
+                        for part in msg["content"]:
+                            if part.get("type") == "image_url":
+                                safe_parts.append({"type": "image_url", "image_url": {"url": "[BASE64_DATA...]"}})
+                            else:
+                                safe_parts.append(part)
+                        safe_msgs.append({"role": msg["role"], "content": safe_parts})
+                    else:
+                        safe_msgs.append(msg)
+                safe_payload["messages"] = safe_msgs
+            safe_headers = headers.copy()
+            if "Authorization" in safe_headers:
+                auth_value = safe_headers["Authorization"]
+                if auth_value.startswith("Bearer "):
+                    safe_headers["Authorization"] = "Bearer ***"
+                else:
+                    safe_headers["Authorization"] = "***"
+            logger.info(f"{self.log_prefix} (OpenAI-Chat) 详细调试 - 请求端点: {endpoint}")
+            logger.info(f"{self.log_prefix} (OpenAI-Chat) 详细调试 - 请求头: {safe_headers}")
+            logger.info(f"{self.log_prefix} (OpenAI-Chat) 详细调试 - 请求体: {json.dumps(safe_payload, ensure_ascii=False, indent=2)}")
+
+        logger.info(f"{self.log_prefix} (OpenAI-Chat) 发起 chat/completions 请求: {model}, Prompt: {full_prompt[:30]}... To: {endpoint}")
 
         # 获取代理配置
         proxy_config = self._get_proxy_config()
 
-        data = json.dumps(payload).encode("utf-8")
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": f"Bearer {api_key.replace('Bearer ', '')}" if api_key else "",
-        }
-
-        logger.info(f"{self.log_prefix} (ChatImage) 发起请求: {model}, To: {endpoint}")
-
         req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
 
         try:
-            timeout = 600
+            # 构建 opener（局部使用，不污染全局）
             if proxy_config:
-                proxy_handler = urllib.request.ProxyHandler(
-                    {"http": proxy_config["http"], "https": proxy_config["https"]}
-                )
+                proxy_handler = urllib.request.ProxyHandler({
+                    'http': proxy_config['http'],
+                    'https': proxy_config['https']
+                })
                 opener = urllib.request.build_opener(proxy_handler)
-                urllib.request.install_opener(opener)
-                timeout = proxy_config.get("timeout", 600)
+                timeout = proxy_config.get('timeout', 600)
+            else:
+                opener = urllib.request.build_opener()
+                timeout = 600
 
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with opener.open(req, timeout=timeout) as response:
                 response_status = response.status
-                body_bytes = response.read()
-                body_str = body_bytes.decode("utf-8")
+                content_type = response.headers.get("Content-Type", "")
+
+                logger.info(f"{self.log_prefix} (OpenAI-Chat) 响应状态: {response_status}, Content-Type: {content_type}")
 
                 if 200 <= response_status < 300:
-                    resp_json = json.loads(body_str)
+                    # 检测是否为 SSE 流式响应（优先通过 Content-Type 判断）
+                    is_sse = "text/event-stream" in content_type
 
-                    # 1. 尝试从 choices 提取 (Chat 模式)
-                    choices = resp_json.get("choices")
-                    if isinstance(choices, list) and choices:
-                        message = choices[0].get("message", {})
-                        content = message.get("content")
+                    if is_sse:
+                        # SSE 流式响应：逐行读取避免 read() 返回空
+                        logger.info(f"{self.log_prefix} (OpenAI-Chat) 检测到 SSE 流式响应，开始逐行读取")
+                        sse_lines: list[str] = []
+                        for raw_line in response:
+                            line = raw_line.decode("utf-8", errors="replace")
+                            sse_lines.append(line)
+                        response_body_str = "".join(sse_lines)
+                    else:
+                        # 非流式响应：一次性读取
+                        response_body_bytes = response.read()
+                        response_body_str = response_body_bytes.decode("utf-8")
 
-                        # 执行深度提取
-                        extracted = self._extract_image_from_content(content)
-                        if extracted:
-                            logger.info(f"{self.log_prefix} (ChatImage) 提取图片成功")
-                            return True, extracted
+                    if verbose_debug:
+                        cleaned = self._clean_log_content(response_body_str)
+                        logger.info(f"{self.log_prefix} (OpenAI-Chat) 详细调试 - 响应体: {cleaned[:500]}")
 
-                    # 2. 兜底尝试 OpenAI 标准图像格式 (以防万一)
-                    if isinstance(resp_json.get("data"), list) and resp_json["data"]:
-                        first = resp_json["data"][0]
-                        if "b64_json" in first:
-                            return True, first["b64_json"]
-                        if "url" in first:
-                            return True, first["url"]
+                    stripped = response_body_str.strip()
+                    logger.info(f"{self.log_prefix} (OpenAI-Chat) 响应体长度: {len(stripped)}, 前200字符: {stripped[:200]}")
 
-                    logger.error(
-                        f"{self.log_prefix} (ChatImage) 响应中未找到可识别的图片数据. Preview: {body_str[:200]}"
-                    )
-                    return False, "未能从回复中提取到图片信息"
+                    if is_sse or stripped.startswith("data:") or stripped.startswith("event:"):
+                        # SSE 流式响应（grok2api 等服务强制返回流式）
+                        content = self._parse_sse_stream(stripped)
+                        if content:
+                            return self._extract_image_from_content(content)
+                        else:
+                            logger.error(f"{self.log_prefix} (OpenAI-Chat) SSE 流式响应中无有效内容")
+                            return False, "SSE 流式响应中未找到图片数据"
+                    else:
+                        # 普通 JSON 响应（非流式服务或服务端忽略了 stream 参数）
+                        response_data = json.loads(stripped)
+                        return self._extract_image_from_response(response_data)
                 else:
-                    logger.error(
-                        f"{self.log_prefix} (ChatImage) API 请求失败 (HTTP {response_status}). Body: {body_str[:200]}"
-                    )
-                    return False, f"API 请求失败 (状态码 {response_status})"
+                    response_body_bytes = response.read()
+                    response_body_str = response_body_bytes.decode("utf-8")
+                    logger.error(f"{self.log_prefix} (OpenAI-Chat) API请求失败. 状态: {response_status}. 正文: {response_body_str[:300]}...")
+                    return False, f"Chat API请求失败(状态码 {response_status})"
 
         except Exception as e:
-            logger.error(f"{self.log_prefix} (ChatImage) 请求异常: {e!r}", exc_info=True)
-            return False, f"网络请求异常: {str(e)[:100]}"
+            logger.error(f"{self.log_prefix} (OpenAI-Chat) 请求异常: {e!r}", exc_info=True)
+            return False, f"Chat API请求异常: {str(e)[:100]}"
+    def _parse_sse_stream(self, raw_sse: str) -> str:
+        """解析 SSE（Server-Sent Events）流式响应，拼接所有 chunk 的 content
 
-    def _build_gemini_style_config(self, model_config: Dict[str, Any], size: Optional[str] = None) -> Dict[str, Any]:
-        """适配 Nano Banana 等所需的 Gemini 风格参数"""
-        fixed_size_enabled = model_config.get("fixed_size_enabled", False)
-        default_size = model_config.get("default_size", "").strip()
-        llm_original_size = size or model_config.get("_llm_original_size", "").strip() or None
+        SSE 格式示例（OpenAI chat completion chunk）：
+            data: {"id":"xxx","object":"chat.completion.chunk","choices":[{"delta":{"content":"..."}}]}
+            data: [DONE]
 
-        config = {}
-        aspect_ratio = None
-        resolution = None
+        Args:
+            raw_sse: 原始 SSE 响应文本
 
-        if not fixed_size_enabled:
-            # 动态模式
-            if llm_original_size:
-                aspect_ratio = pixel_size_to_gemini_aspect(llm_original_size, self.log_prefix) or "1:1"
-            else:
-                aspect_ratio = "1:1"
-        else:
-            # 固定尺寸模式解析
-            if default_size.startswith("-"):  # 仅分辨率
-                resolution = default_size[1:].strip().upper()
-                aspect_ratio = "1:1"
-            elif "-" in default_size:  # 宽高比-分辨率
-                parts = default_size.split("-", 1)
-                aspect_ratio = parts[0].strip()
-                resolution = parts[1].strip().upper()
-            elif ":" in default_size:  # 仅宽高比
-                aspect_ratio = default_size
-            elif "x" in default_size.lower():  # 像素转宽高比
-                aspect_ratio = pixel_size_to_gemini_aspect(default_size, self.log_prefix) or "1:1"
+        Returns:
+            拼接后的完整 content 文本
+        """
+        content_parts: list[str] = []
 
-        if aspect_ratio:
-            config["image_aspect_ratio"] = aspect_ratio
-        if resolution:
-            config["image_resolution"] = resolution
+        for line in raw_sse.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
 
-        return config
+            # 跳过 event: 行和其他非 data 行
+            if not line.startswith("data:"):
+                continue
 
-    def _extract_image_from_content(self, content: Any) -> Optional[str]:
-        """从各种格式的 content 字段深度提取图片"""
+            data_str = line[len("data:"):].strip()
+
+            # 结束标记
+            if data_str == "[DONE]":
+                break
+
+            # 解析 JSON chunk
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                logger.debug(f"{self.log_prefix} (OpenAI-Chat) SSE 跳过无效 JSON: {data_str[:80]}")
+                continue
+
+            # 从 chunk 中提取 delta.content
+            try:
+                choices = chunk.get("choices", [])
+                if choices:
+                    delta = choices[0].get("delta", {})
+                    delta_content = delta.get("content", "")
+                    if delta_content:
+                        content_parts.append(delta_content)
+            except (IndexError, KeyError, TypeError):
+                pass
+
+        full_content = "".join(content_parts)
+        if full_content:
+            logger.info(f"{self.log_prefix} (OpenAI-Chat) SSE 解析完成，内容长度: {len(full_content)}")
+        return full_content
+
+    def _extract_image_from_content(self, content: str) -> Tuple[bool, str]:
+        """从拼接后的文本内容中提取图片数据
+
+        复用 _extract_image_from_response 的多策略提取逻辑，
+        但直接接收 content 字符串而非完整的 response_data dict。
+
+        Args:
+            content: 拼接后的完整文本（可能包含 Markdown 图片、URL、Base64 等）
+
+        Returns:
+            (成功标志, 图片数据或错误信息)
+        """
+        # 构造伪响应结构，复用已有提取逻辑
+        fake_response = {
+            "choices": [{
+                "message": {
+                    "content": content
+                }
+            }]
+        }
+        return self._extract_image_from_response(fake_response)
+
+    def _extract_image_from_response(self, response_data: dict) -> Tuple[bool, str]:
+        """从 chat/completions 响应中提取图片数据
+
+        多策略提取：
+        1. Markdown 图片链接: ![...](url)
+        2. Data URI: data:image/...;base64,...
+        3. Base64 特征检测
+        4. 普通 URL
+        """
+        # 提取 assistant 回复内容
+        content = ""
+        try:
+            choices = response_data.get("choices", [])
+            if choices:
+                message = choices[0].get("message", {})
+                content = message.get("content", "")
+        except (IndexError, KeyError, TypeError):
+            pass
+
         if not content:
-            return None
+            logger.error(f"{self.log_prefix} (OpenAI-Chat) 响应中无内容")
+            return False, "Chat API响应中无内容"
 
-        # 如果是列表格式 (OpenRouter/Vision 风格)
-        if isinstance(content, list):
-            for item in content:
-                if not isinstance(item, dict):
-                    continue
-                # 情况 A: 直接包含 image_url
-                if item.get("type") == "image_url":
-                    url = item.get("image_url", {}).get("url")
-                    if url:
-                        return url
-                # 情况 B: 包含文本，从文本中提取
-                if item.get("type") == "text":
-                    res = self._extract_from_text(item.get("text", ""))
-                    if res:
-                        return res
-            return None
+        logger.debug(f"{self.log_prefix} (OpenAI-Chat) 提取图片，内容长度: {len(content)}")
 
-        # 如果是字符串 (通用 Chat 模式)
-        if isinstance(content, str):
-            return self._extract_from_text(content)
+        # 策略1：Markdown 图片链接 ![alt](url)
+        md_pattern = r'!\[.*?\]\((https?://[^\s\)]+)\)'
+        md_matches = re.findall(md_pattern, content)
+        if md_matches:
+            image_url = md_matches[0]
+            logger.info(f"{self.log_prefix} (OpenAI-Chat) 从 Markdown 提取到图片URL: {image_url[:70]}...")
+            return True, image_url
 
-        return None
+        # 策略2：Data URI (data:image/xxx;base64,...)
+        data_uri_pattern = r'data:image/[a-zA-Z]+;base64,([A-Za-z0-9+/=]+)'
+        data_uri_matches = re.findall(data_uri_pattern, content)
+        if data_uri_matches:
+            b64_data = data_uri_matches[0]
+            logger.info(f"{self.log_prefix} (OpenAI-Chat) 从 Data URI 提取到 Base64 数据，长度: {len(b64_data)}")
+            return True, b64_data
 
-    def _extract_from_text(self, text: str) -> Optional[str]:
-        """多策略提取算法"""
-        if not text:
-            return None
+        # 策略3：Base64 特征检测（连续长 base64 字符串）
+        b64_pattern = r'(?<![A-Za-z0-9+/])([A-Za-z0-9+/]{200,}={0,2})(?![A-Za-z0-9+/])'
+        b64_matches = re.findall(b64_pattern, content)
+        if b64_matches:
+            # 取最长的匹配
+            longest = max(b64_matches, key=len)
+            # 验证是否是有效的 base64 图片数据
+            if longest.startswith(('/9j/', 'iVBORw', 'UklGR', 'R0lGOD')) or len(longest) > 1000:
+                logger.info(f"{self.log_prefix} (OpenAI-Chat) 检测到 Base64 图片数据，长度: {len(longest)}")
+                return True, longest
 
-        # 策略 1: Markdown 图片标签 ![alt](url_or_base64)
-        md_match = re.search(r"!\[.*?\]\((.*?)\)", text, re.DOTALL)
-        if md_match:
-            candidate = md_match.group(1).strip()
-            # 移除可能的引号
-            candidate = candidate.strip("'\"")
-            if self._is_valid_image_source(candidate):
-                return candidate
+        # 策略4：普通 URL（http/https 图片链接）
+        url_pattern = r'(https?://[^\s<>"\']+\.(?:png|jpg|jpeg|gif|webp|bmp)(?:\?[^\s<>"\']*)?)'
+        url_matches = re.findall(url_pattern, content, re.IGNORECASE)
+        if url_matches:
+            image_url = url_matches[0]
+            logger.info(f"{self.log_prefix} (OpenAI-Chat) 从内容提取到图片URL: {image_url[:70]}...")
+            return True, image_url
 
-        # 策略 2: 查找 Data URI (data:image/...)
-        data_uri_match = re.search(r"data:image/[^;]+;base64,[\w+/=]+", text)
-        if data_uri_match:
-            return data_uri_match.group(0)
+        # 策略5：任意 URL（可能是不带扩展名的图片链接）
+        any_url_pattern = r'(https?://[^\s<>"\']+)'
+        any_url_matches = re.findall(any_url_pattern, content)
+        if any_url_matches:
+            # 只取第一个 URL，可能是图片
+            image_url = any_url_matches[0]
+            logger.info(f"{self.log_prefix} (OpenAI-Chat) 从内容提取到候选URL: {image_url[:70]}...")
+            return True, image_url
 
-        # 策略 3: 基于特征检测纯 Base64 (通常占据大部分文本或在特定标记内)
-        # 寻找常见的图片 Base64 起始特征
-        prefixes = ("/9j/", "iVBORw", "UklGR", "R0lGOD")
-        for pref in prefixes:
-            start_idx = text.find(pref)
-            if start_idx != -1:
-                # 尝试提取后续合法的 base64 字符
-                # Base64 包含 A-Z, a-z, 0-9, +, /, = 以及换行
-                remainder = text[start_idx:]
-                # 贪婪匹配直到非 base64 字符
-                match = re.match(r"[A-Za-z0-9+/=\s\n\r]+", remainder)
-                if match:
-                    b64_candidate = match.group(0).replace("\n", "").replace("\r", "").replace(" ", "")
-                    # 长度校验，图片通常比较长
-                    if len(b64_candidate) > 100:
-                        return b64_candidate
+        logger.error(f"{self.log_prefix} (OpenAI-Chat) 无法从响应中提取图片。内容预览: {content[:200]}...")
+        return False, "无法从 Chat API 响应中提取图片数据"
 
-        # 策略 4: 查找普通 URL
-        url_match = re.search(r"https?://\S+", text)
-        if url_match:
-            url = url_match.group(0).rstrip(").,> \"'")
-            return url
-
-        return None
-
-    def _is_valid_image_source(self, s: str) -> bool:
-        """检查提取到的字符串是否像是合法的图片源"""
-        if not s:
-            return False
-        if s.startswith("http"):
-            return True
-        if s.startswith("data:image"):
-            return True
-        # Base64 特征检测
-        return any(s.startswith(p) for p in ("/9j/", "iVBORw", "UklGR", "R0lGOD"))
+    def _clean_log_content(self, content: str) -> str:
+        """清理日志中的长 base64 数据"""
+        # 替换长 base64 字符串
+        cleaned = re.sub(
+            r'[A-Za-z0-9+/]{200,}={0,2}',
+            '[BASE64_DATA...]',
+            content
+        )
+        return cleaned

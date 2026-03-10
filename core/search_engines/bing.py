@@ -1,16 +1,14 @@
-"""
-Bing 图片搜索引擎实现
-支持国内直接访问，无需代理
-"""
+"""Bing 图片搜索引擎实现（国内可直接访问，无需代理）"""
+
+from __future__ import annotations
 
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
-# 延迟导入 BeautifulSoup，避免 IDE 类型检查警告
 try:
-    from bs4 import BeautifulSoup  # type: ignore[import-not-found]
+    from bs4 import BeautifulSoup  # type: ignore[import-untyped]
 except ImportError:
     BeautifulSoup = None  # type: ignore[assignment, misc]
 
@@ -20,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class BingImageEngine(BaseSearchEngine):
-    """Bing 图片搜索引擎实现"""
+    """Bing 图片搜索引擎"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)
@@ -28,15 +26,7 @@ class BingImageEngine(BaseSearchEngine):
         self.region: str = self.config.get("region", "zh-CN")
 
     async def search_images(self, query: str, num_results: int = 5) -> List[SearchResult]:
-        """执行Bing图片搜索（国内可直接访问，无需科学上网）
-
-        Args:
-            query: 搜索关键词
-            num_results: 期望的图片数量
-
-        Returns:
-            图片搜索结果列表
-        """
+        """执行 Bing 图片搜索"""
         if BeautifulSoup is None:
             logger.error("BeautifulSoup4 未安装，无法使用图片搜索功能")
             return []
@@ -51,7 +41,6 @@ class BingImageEngine(BaseSearchEngine):
                 "FORM": "HDRSC2",
             }
 
-            # 尝试多个Bing图片搜索域名
             html: str = ""
             successful_base_url: str = ""
             for base_url in self.base_urls:
@@ -73,12 +62,10 @@ class BingImageEngine(BaseSearchEngine):
             soup = BeautifulSoup(html, "html.parser")
             results: List[SearchResult] = []
 
-            # 解析图片结果 - Bing图片搜索的HTML结构
             image_elements = soup.select("a.iusc")
 
             for elem in image_elements[:num_results]:
                 try:
-                    # 尝试从m属性获取JSON数据
                     m_attr = elem.get("m")
                     if m_attr:
                         try:
@@ -98,15 +85,13 @@ class BingImageEngine(BaseSearchEngine):
                                 )
                                 continue
                         except json.JSONDecodeError:
-                            # JSON解析失败，尝试备用方法
                             pass
 
-                    # 备用解析：从img标签获取
+                    # 备用解析：从 img 标签获取
                     img_elem = elem.find("img")
                     if img_elem:
                         image_url = img_elem.get("src") or img_elem.get("data-src") or ""
                         if image_url:
-                            # 处理相对路径
                             if image_url.startswith("//"):
                                 image_url = "https:" + image_url
                             elif image_url.startswith("/") and successful_base_url:

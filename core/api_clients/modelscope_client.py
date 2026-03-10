@@ -3,10 +3,9 @@
 import json
 import time
 import base64
-import requests
 from typing import Dict, Any, Tuple, Optional
 
-from .base_client import BaseApiClient, logger
+from .base_client import BaseApiClient, logger, get_requests_module
 
 
 class ModelscopeClient(BaseApiClient):
@@ -23,6 +22,7 @@ class ModelscopeClient(BaseApiClient):
         input_image_base64: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """发送魔搭格式的HTTP请求生成图片"""
+        requests = get_requests_module()
         try:
             # API配置
             api_key = model_config.get("api_key", "").replace("Bearer ", "")
@@ -56,7 +56,7 @@ class ModelscopeClient(BaseApiClient):
             # 根据是否有输入图片，构建不同的请求参数
             if input_image_base64:
                 image_data_uri = self._prepare_image_data_uri(input_image_base64)
-                request_data = {"model": model_name, "prompt": full_prompt, "image_url": image_data_uri}
+                request_data = {"model": model_name, "prompt": full_prompt, "image_url": [image_data_uri]}
                 logger.info(f"{self.log_prefix} (魔搭) 使用图生图模式")
             else:
                 request_data = {"model": model_name, "prompt": full_prompt}
@@ -79,7 +79,7 @@ class ModelscopeClient(BaseApiClient):
                 "url": endpoint,
                 "headers": headers,
                 "data": json.dumps(request_data, ensure_ascii=False).encode("utf-8"),
-                "timeout": proxy_config.get("timeout", 180) if proxy_config else 180,
+                "timeout": proxy_config.get("timeout", 30) if proxy_config else 30,
             }
 
             if proxy_config:
@@ -109,11 +109,11 @@ class ModelscopeClient(BaseApiClient):
                 "X-ModelScope-Task-Type": "image_generation",
             }
 
-            max_attempts = 18  # 最多检查3分钟
+            max_attempts = 24  # 最多检查2分钟
             for _attempt in range(max_attempts):
                 try:
                     status_url = f"{base_url}/tasks/{task_id}"
-                    check_kwargs = {"url": status_url, "headers": check_headers, "timeout": 15}
+                    check_kwargs = {"url": status_url, "headers": check_headers, "timeout": 10}
 
                     if proxy_config:
                         check_kwargs["proxies"] = {"http": proxy_config["http"], "https": proxy_config["https"]}
@@ -133,7 +133,7 @@ class ModelscopeClient(BaseApiClient):
 
                             # 下载图片并转换为base64
                             try:
-                                img_kwargs = {"url": image_url, "timeout": 120}
+                                img_kwargs = {"url": image_url, "timeout": 30}
                                 if proxy_config:
                                     img_kwargs["proxies"] = {
                                         "http": proxy_config["http"],
@@ -162,19 +162,19 @@ class ModelscopeClient(BaseApiClient):
                         logger.error(f"{self.log_prefix} (魔搭) 任务失败: {error_msg}")
                         return False, f"任务执行失败: {error_msg}"
 
-                    elif task_status in ["PENDING", "RUNNING"]:
+                    elif task_status in ["PENDING", "RUNNING", "PROCESSING"]:
                         logger.info(f"{self.log_prefix} (魔搭) 任务状态: {task_status}，等待中...")
-                        time.sleep(10)  # 每次等待 10 秒
+                        time.sleep(5)
                         continue
 
                     else:
                         logger.warning(f"{self.log_prefix} (魔搭) 未知任务状态: {task_status}")
-                        time.sleep(10)  # 每次等待 10 秒
+                        time.sleep(5)
                         continue
 
                 except Exception as e:
                     logger.warning(f"{self.log_prefix} (魔搭) 状态检查异常: {e}")
-                    time.sleep(10)  # 每次等待 10 秒
+                    time.sleep(5)
                     continue
 
             logger.error(f"{self.log_prefix} (魔搭) 任务超时，未能在规定时间内完成")

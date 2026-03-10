@@ -13,6 +13,11 @@ from typing import Dict, Any, Optional
 import toml
 import json
 
+from src.common.logger import get_logger
+
+
+logger = get_logger("selfie_painter_v2.config_manager")
+
 
 class EnhancedConfigManager:
     """增强的配置管理器，提供类似 MaiBot 主配置的更新机制"""
@@ -52,11 +57,10 @@ class EnhancedConfigManager:
             for file_path in backup_files[keep_count:]:
                 try:
                     os.remove(file_path)
-                    print(f"[EnhancedConfigManager] 删除旧备份文件: {os.path.basename(file_path)}")
-                except Exception as e:
-                    print(f"[EnhancedConfigManager] 删除备份文件失败 {file_path}: {e}")
-        except Exception as e:
-            print(f"[EnhancedConfigManager] 清理备份文件时出错: {e}")
+                except OSError as exc:
+                    logger.debug(f"[EnhancedConfigManager] 删除旧备份失败: {file_path}, {exc}")
+        except (OSError, ValueError) as exc:
+            logger.debug(f"[EnhancedConfigManager] 清理旧备份失败: {exc}")
 
     def backup_config(self, version: str = "") -> str:
         """
@@ -68,30 +72,22 @@ class EnhancedConfigManager:
         Returns:
             str: 备份文件路径，如果失败则返回空字符串
         """
-        print(f"[EnhancedConfigManager] 尝试备份配置文件，版本={version}")
-        print(f"[EnhancedConfigManager] 配置文件路径: {self.config_file_path}")
-        print(f"[EnhancedConfigManager] old 目录: {self.old_dir}")
         if not os.path.exists(self.config_file_path):
-            print("[EnhancedConfigManager] 配置文件不存在，跳过备份")
             return ""
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         version_suffix = f"_v{version}" if version else ""
-        # 自动备份文件名添加 "auto" 标记，并以 .toml 结尾
         backup_name = f"{self.config_file_name}.auto_backup_{timestamp}{version_suffix}.toml"
         backup_path = os.path.join(self.old_dir, backup_name)
-        print(f"[EnhancedConfigManager] 备份文件名: {backup_name}")
 
         try:
             shutil.copy2(self.config_file_path, backup_path)
-            # 更新备份文件的修改时间为当前时间，确保在清理时它被视为最新的
-            os.utime(backup_path, None)  # None 表示设置为当前时间
-            print(f"[EnhancedConfigManager] 备份成功: {backup_path}")
-            # 备份成功后清理旧备份，保留10个
+            os.utime(backup_path, None)
+            logger.info(f"[EnhancedConfigManager] 备份成功: {backup_name}")
             self._cleanup_old_backups(keep_count=10)
             return backup_path
         except Exception as e:
-            print(f"[EnhancedConfigManager] 备份配置文件失败: {e}")
+            logger.warning(f"[EnhancedConfigManager] 备份失败: {e}")
             return ""
 
     def load_config(self) -> Dict[str, Any]:
@@ -108,7 +104,7 @@ class EnhancedConfigManager:
             with open(self.config_file_path, "r", encoding="utf-8") as f:
                 return toml.load(f) or {}
         except Exception as e:
-            print(f"[EnhancedConfigManager] 加载配置文件失败: {e}")
+            logger.warning(f"[EnhancedConfigManager] 加载配置文件失败: {e}")
             return {}
 
     def save_config(self, config: Dict[str, Any]):
@@ -122,7 +118,7 @@ class EnhancedConfigManager:
             with open(self.config_file_path, "w", encoding="utf-8") as f:
                 toml.dump(config, f)
         except Exception as e:
-            print(f"[EnhancedConfigManager] 保存配置文件失败: {e}")
+            logger.warning(f"[EnhancedConfigManager] 保存配置文件失败: {e}")
 
     def _format_toml_value(self, value: Any) -> str:
         """将Python值格式化为合法的TOML字符串（用于注释生成）"""
@@ -260,7 +256,7 @@ class EnhancedConfigManager:
             with open(self.config_file_path, "w", encoding="utf-8") as f:
                 f.write(toml_str)
         except Exception as e:
-            print(f"[EnhancedConfigManager] 保存带注释的配置文件失败: {e}")
+            logger.warning(f"[EnhancedConfigManager] 保存带注释的配置文件失败: {e}")
             # 回退到普通保存
             self.save_config(config)
 
@@ -335,7 +331,7 @@ class EnhancedConfigManager:
                 else:
                     # 旧配置中有但新配置中没有的键，保留但记录
                     result[key] = user_value
-                    print(f"[EnhancedConfigManager] 保留已移除的配置项: {key}")
+                    logger.info(f"[EnhancedConfigManager] 保留已移除的配置项: {key}")
 
             return result
 
@@ -468,100 +464,53 @@ class EnhancedConfigManager:
         Returns:
             Dict[str, Any]: 更新后的配置
         """
-        print(f"[EnhancedConfigManager] 开始检查配置更新，期望版本 v{expected_version}")
+        logger.info(f"[EnhancedConfigManager] 检查配置更新，期望版本 v{expected_version}")
 
         # 加载现有配置
         if old_config is None:
-            print(f"[EnhancedConfigManager] 从文件加载配置: {self.config_file_path}")
             old_config = self.load_config()
-        else:
-            print("[EnhancedConfigManager] 使用提供的旧配置（跳过文件加载）")
 
         # 如果配置文件不存在，使用默认配置
         if not old_config:
-            print(f"[EnhancedConfigManager] 配置文件不存在，使用默认配置 v{expected_version}")
+            logger.info(f"[EnhancedConfigManager] 配置不存在，使用默认配置 v{expected_version}")
             final_config = default_config
             if schema:
-                print("[EnhancedConfigManager] 保存带注释的默认配置")
                 self.save_config_with_comments(final_config, schema)
             else:
-                print("[EnhancedConfigManager] 保存默认配置")
                 self.save_config(final_config)
             return final_config
 
         current_version = self.get_config_version(old_config)
-        print(f"[EnhancedConfigManager] 当前配置版本 v{current_version}, 期望版本 v{expected_version}")
 
         # 如果版本相同，不需要更新
         if current_version == expected_version:
-            print(f"[EnhancedConfigManager] 配置版本已是最新 v{current_version}")
+            logger.info(f"[EnhancedConfigManager] 配置版本已是最新 v{current_version}")
             return old_config
 
-        # 版本不同，无论高低都先备份当前配置文件
-        print("[EnhancedConfigManager] 版本不同，开始备份当前配置")
-        backup_path = self.backup_config(current_version)
-        if backup_path:
-            print(f"[EnhancedConfigManager] 已备份旧配置文件到: {backup_path}")
-        else:
-            print("[EnhancedConfigManager] 备份失败或配置文件不存在")
-
-        print(f"[EnhancedConfigManager] 检测到配置版本需要更新: 当前=v{current_version}, 期望=v{expected_version}")
+        # 版本不同，备份当前配置
+        logger.info(f"[EnhancedConfigManager] 配置更新: v{current_version} -> v{expected_version}")
+        self.backup_config(current_version)
 
         # 比较配置变化
-        print("[EnhancedConfigManager] 开始比较新旧配置差异")
         changes = self.compare_configs(old_config, default_config)
         if changes["added"]:
-            print(f"[EnhancedConfigManager] 新增配置项: {', '.join(changes['added'])}")
+            logger.info(f"[EnhancedConfigManager] 新增: {', '.join(changes['added'])}")
         if changes["removed"]:
-            print(f"[EnhancedConfigManager] 移除配置项: {', '.join(changes['removed'])}")
-        if changes["modified"]:
-            for mod in changes["modified"]:
-                path = mod["path"]
-                old_val = mod["old"]
-                new_val = mod["new"]
-                # 隐藏敏感字段的值
-                if any(sensitive in path.lower() for sensitive in ["api_key", "key", "token", "secret", "password"]):
-                    old_val = "***" if old_val else ""
-                    new_val = "***" if new_val else ""
-                print(f"[EnhancedConfigManager] 修改配置项: {path} (旧值: {old_val} -> 新值: {new_val})")
-        if not changes["added"] and not changes["removed"] and not changes["modified"]:
-            print("[EnhancedConfigManager] 配置内容无变化（仅版本号不同）")
+            logger.info(f"[EnhancedConfigManager] 移除: {', '.join(changes['removed'])}")
 
         # 合并配置
-        print("[EnhancedConfigManager] 开始合并新旧配置")
         merged_config = self.merge_configs(old_config, default_config)
-        print("[EnhancedConfigManager] 合并完成")
-
-        # 调试：检查 api_key 是否保留（不打印具体值）
-        def get_nested_value(config, path):
-            parts = path.split(".")
-            cur = config
-            for part in parts:
-                if isinstance(cur, dict) and part in cur:
-                    cur = cur[part]
-                else:
-                    return None
-            return cur
-
-        api_key_value = get_nested_value(merged_config, "models.model1.api_key")
-        if api_key_value:
-            print(f"[EnhancedConfigManager] 合并后 api_key 已保留（长度: {len(api_key_value)}）")
-        else:
-            print("[EnhancedConfigManager] 警告: 合并后未找到 api_key")
 
         # 更新版本号
         if "plugin" in merged_config:
             merged_config["plugin"]["config_version"] = expected_version
-            print(f"[EnhancedConfigManager] 更新配置版本号 -> v{expected_version}")
 
         # 保存新配置
         if schema:
-            print("[EnhancedConfigManager] 保存带注释的配置文件")
             self.save_config_with_comments(merged_config, schema)
         else:
-            print("[EnhancedConfigManager] 保存配置文件")
             self.save_config(merged_config)
 
-        print(f"[EnhancedConfigManager] 配置文件已从 v{current_version} 更新到 v{expected_version}")
+        logger.info(f"[EnhancedConfigManager] 配置已更新到 v{expected_version}")
 
         return merged_config

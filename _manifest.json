@@ -1,8 +1,8 @@
 {
   "manifest_version": 1,
   "name": "画家麦麦的自拍日常",
-  "version": "3.5.3",
-  "description": "画家麦麦的自拍日常 - 集智能绘画与自拍生成于一体的 MaiBot 插件。🎨 画图功能：支持文生图/图生图智能识别，兼容 OpenAI、豆包、Gemini、魔搭等多种 API，命令式风格转换，内置 7 个魔搭模型预设。📸 自拍功能：智能日程规划，动态场景描述，自动配文生成，支持自定义人设注入让配文更符合角色设定。提供动态模型切换、风格别名、结果缓存、智能参考搜索（内置 Bing 搜图）等高级特性。完全符合 MaiBot 插件开发标准。",
+  "version": "3.6.0",
+  "description": "集智能绘画与自拍生成于一体的 MaiBot 插件。支持文生图/图生图自动识别，兼容 OpenAI、OpenAI-Chat、豆包、Gemini、魔搭、ComfyUI 等多种 API 格式。内置日程系统、衣柜系统、三种自拍模式（standard/mirror/photo）、SSE 流式响应支持。提供命令式风格转换、模型配置管理、结果缓存、提示词优化、智能参考搜索等高级特性。",
   "author": {
     "name": "Ptrel，Rabbit-Jia-Er，saberlights Kiuon，nguspring",
     "url": "https://github.com/nguspring/selfie_painter"
@@ -23,14 +23,15 @@
     "魔搭",
     "文生图",
     "图生图",
-    "人设"
+    "人设",
+    "ComfyUI",
+    "衣柜"
   ],
   "categories": [
     "Content Generation",
     "Entertainment & Interaction"
   ],
   "default_locale": "zh-CN",
-  "locales_path": "_locales",
   "plugin_info": {
     "is_built_in": false,
     "plugin_type": "image_generator",
@@ -74,16 +75,20 @@
     ],
     "features": [
       "智能文生图/图生图识别",
-      "多API格式支持(OpenAI/豆包/Gemini/魔搭)",
+      "多API格式支持(OpenAI/OpenAI-Chat/豆包/Gemini/魔搭/ComfyUI)",
       "命令式风格转换",
       "动态模型配置管理",
       "风格别名系统",
       "结果缓存机制",
       "调试开关控制",
       "支持图生图开关",
-      "智能参考搜索功能（内置Bing搜图）",
-      "自拍模式标准/对镜双模式负面提示词",
-      "内置7个魔搭模型预设"
+      "内置日程系统",
+      "衣柜系统",
+      "三种自拍模式(standard/mirror/photo)",
+      "SSE流式响应支持",
+      "智能参考搜索(内置Bing搜图)",
+      "独立生图接口(generate_image_standalone)"
     ]
-  }
+  },
+  "id": "selfie_painter"
 }

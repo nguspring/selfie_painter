@@ -5,7 +5,6 @@
 
 import json
 import urllib.request
-import traceback
 from typing import Dict, Any, Tuple, Optional
 
 from .base_client import BaseApiClient, logger
@@ -53,7 +52,7 @@ class OpenAIClient(BaseApiClient):
         # 添加可选参数
         if negative_prompt:
             payload_dict["negative_prompt"] = negative_prompt
-        if seed and seed != -1:
+        if seed is not None and seed != -1:
             payload_dict["seed"] = seed
 
         # 如果有输入图片，添加图生图参数
@@ -149,18 +148,18 @@ class OpenAIClient(BaseApiClient):
         req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
 
         try:
-            # 如果启用了代理，设置代理处理器
+            # 构建 opener（局部使用，不污染全局）
             if proxy_config:
                 proxy_handler = urllib.request.ProxyHandler(
                     {"http": proxy_config["http"], "https": proxy_config["https"]}
                 )
                 opener = urllib.request.build_opener(proxy_handler)
-                urllib.request.install_opener(opener)
                 timeout = proxy_config.get("timeout", 600)
             else:
+                opener = urllib.request.build_opener()
                 timeout = 600
 
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with opener.open(req, timeout=timeout) as response:
                 response_status = response.status
                 response_body_bytes = response.read()
                 response_body_str = response_body_bytes.decode("utf-8")
@@ -217,7 +216,6 @@ class OpenAIClient(BaseApiClient):
                     return False, f"图片API请求失败(状态码 {response.status})"
         except Exception as e:
             logger.error(f"{self.log_prefix} (OpenAI) 图片生成时意外错误: {e!r}", exc_info=True)
-            traceback.print_exc()
             return False, f"图片生成HTTP请求时发生意外错误: {str(e)[:100]}"
 
     def _clean_response_body(self, response_body: str) -> str:
@@ -231,8 +229,6 @@ class OpenAIClient(BaseApiClient):
         """
         try:
             # 如果响应体是JSON，尝试解析并替换b64_json字段
-            import json
-
             data = json.loads(response_body)
             if isinstance(data, dict):
                 # 检查是否有b64_json字段
@@ -242,7 +238,7 @@ class OpenAIClient(BaseApiClient):
                             item["b64_json"] = "[BASE64_DATA...]"
                 # 检查是否有images字段（魔搭格式）
                 if "images" in data and isinstance(data["images"], list) and len(data["images"]) > 0:
-                    for _i, img in enumerate(data["images"]):
+                    for img in data["images"]:
                         if isinstance(img, dict) and "url" in img:
                             # URL可以保留
                             pass

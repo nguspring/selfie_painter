@@ -4,7 +4,22 @@ import asyncio
 from typing import Dict, Any, Tuple, Optional
 from src.common.logger import get_logger
 
-logger = get_logger("pic_action")
+logger = get_logger("mais_art.api")
+
+
+class NonRetryableError(Exception):
+    """不可重试的错误（如内容审核拒绝），直接终止重试循环"""
+
+    pass
+
+
+def get_requests_module() -> Any:
+    """按需导入 requests，避免插件加载阶段因为缺少依赖直接失败。"""
+    try:
+        import requests
+    except ModuleNotFoundError as exc:
+        raise NonRetryableError("缺少依赖 requests，请先安装后再使用该模型。") from exc
+    return requests
 
 
 class BaseApiClient:
@@ -150,6 +165,10 @@ class BaseApiClient:
                 else:
                     logger.error(f"{self.log_prefix} 重试 {max_retries} 次后API调用仍失败: {result}")
                     return False, result
+
+            except NonRetryableError as e:
+                logger.error(f"{self.log_prefix} 不可重试的错误，跳过剩余重试: {e}")
+                return False, str(e)
 
             except Exception as e:
                 if attempt < max_retries:

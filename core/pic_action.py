@@ -1,32 +1,26 @@
-import asyncio
-import traceback
 import base64
 import os
-from datetime import datetime
-from typing import List, Tuple, Optional, Dict, Any, TYPE_CHECKING
+import time as time_module
+from typing import Tuple, Optional, Dict, Any
 
-import aiohttp  # type: ignore[import-not-found]
-
-from src.plugin_system.base.base_action import BaseAction
-from src.plugin_system.base.component_types import ActionActivationType, ChatMode
-from src.common.logger import get_logger
+from src.plugin_system.base.base_action import BaseAction  # pyright: ignore[reportMissingImports]
+from src.plugin_system.base.component_types import (  # pyright: ignore[reportMissingImports]
+    ActionActivationType,
+    ChatMode,
+)
+from src.common.logger import get_logger  # pyright: ignore[reportMissingImports]
 
 from .api_clients import get_client_class
-from .image_utils import ImageProcessor
-from .cache_manager import CacheManager
-from .size_utils import validate_image_size, get_image_size
-from .runtime_state import runtime_state
-from .prompt_optimizer import optimize_prompt
-from .image_search_adapter import ImageSearchAdapter
+from .utils import (
+    ImageProcessor, CacheManager, validate_image_size, get_image_size,
+    runtime_state, SELFIE_HAND_NEGATIVE, ANTI_DUAL_PHONE_PROMPT, ANTI_CAMERA_DEVICE_PROMPT,
+    get_model_config, merge_negative_prompt, inject_llm_original_size,
+    resolve_image_data, schedule_auto_recall, optimize_prompt,
+)
 
-# 类型检查导入（避免循环导入）
-if TYPE_CHECKING:
-    from .schedule_models import ScheduleEntry
+logger = get_logger("selfie_painter")
 
-logger = get_logger("pic_action")
-
-
-class CustomPicAction(BaseAction):
+class SelfiePainterAction(BaseAction):
     """统一的图片生成动作，智能检测文生图或图生图"""
 
     # 激活设置
@@ -47,76 +41,44 @@ class CustomPicAction(BaseAction):
     # 关键词设置（用于Normal模式）
     activation_keywords = [
         # 文生图关键词
-        "画",
-        "绘制",
-        "生成图片",
-        "画图",
-        "draw",
-        "paint",
-        "图片生成",
-        "创作",
+        "画", "绘制", "生成图片", "画图", "draw", "paint", "图片生成", "创作",
         # 图生图关键词
-        "图生图",
-        "修改图片",
-        "基于这张图",
-        "img2img",
-        "重画",
-        "改图",
-        "图片修改",
-        "改成",
-        "换成",
-        "变成",
-        "转换成",
-        "风格",
-        "画风",
-        "改风格",
-        "换风格",
-        "这张图",
-        "这个图",
-        "图片风格",
-        "改画风",
-        "重新画",
-        "再画",
-        "重做",
+        "图生图", "修改图片", "基于这张图", "img2img", "重画", "改图", "图片修改",
+        "改成", "换成", "变成", "转换成", "风格", "画风", "改风格", "换风格",
+        "这张图", "这个图", "图片风格", "改画风", "重新画", "再画", "重做",
         # 自拍关键词
-        "自拍",
-        "selfie",
-        "拍照",
-        "对镜自拍",
-        "镜子自拍",
-        "照镜子",
+        "自拍", "selfie", "拍照", "对镜自拍", "镜子自拍", "照镜子"
     ]
 
     # LLM判定提示词（用于Focus模式）
     ALWAYS_prompt = """
 判定是否需要使用图片生成动作的条件：
 
+**核心原则：只有在用户明确对你提出画图请求时才使用。在群聊中，必须是用户@你或点名叫你来画图。**
+
 **文生图场景：**
-1. 用户明确@你的名字并要求画图、生成图片或创作图像
-2. 用户描述了想要看到的画面或场景
-3. 对话中提到需要视觉化展示某些概念
-4. 用户想要创意图片或艺术作品
-5. 你想要通过画图来制作表情包表达情绪
+1. 用户明确@你的名字或叫你的名字，要求画图、生成图片或创作图像
+2. 用户在私聊中直接要求你画某个内容
 
 **图生图场景：**
-1. 用户发送了图片并@你的名字要求基于该图片进行修改或重新生成
-2. 用户明确@你的名字要求并提到"图生图"、"修改图片"、"基于这张图"等关键词
-3. 用户想要改变现有图片的风格、颜色、内容等
-4. 用户要求在现有图片基础上添加或删除元素
+1. 用户发送了图片并@你的名字，要求基于该图片进行修改或重新生成
+2. 用户明确@你并提到"图生图"、"修改图片"、"基于这张图"等关键词
 
 **自拍场景：**
-1. 用户明确要求你进行自拍、拍照等
-2. 用户提到"自拍"、"selfie"、"照镜子"、"对镜自拍"等关键词
-3. 用户想要看到你的照片或形象
+1. 用户明确@你或叫你的名字，要求你自拍、拍照
+2. 用户在私聊中要求你自拍
 
 **绝对不要使用的情况：**
-1. 纯文字聊天和问答
-2. 只是提到"图片"、"画"等词但不是要求生成
-3. 谈论已存在的图片或照片（仅讨论不修改）
-4. 技术讨论中提到绘图概念但无生成需求
-5. 用户明确表示不需要图片时
-6. 刚刚成功生成过图片，避免频繁请求
-7. 用户表示搜图、找图等需求，而非生成新图
+1. 群聊中用户没有@你或叫你的名字，即使消息内容涉及画图
+2. 其他机器人的命令（如/nai、/sd、/mj等），这些是发给其他机器人的，不是对你的请求
+3. 用户只是在描述场景或事物，并没有要求你画图
+4. 纯文字聊天和问答
+5. 只是提到"图片"、"画"等词但不是在要求你生成
+6. 谈论已存在的图片或照片（仅讨论不修改）
+7. 技术讨论中提到绘图概念但无生成需求
+8. 用户明确表示不需要图片时
+9. 刚刚成功生成过图片，避免频繁请求
+10. 你主动想画图但用户没有要求——不要自作主张
 """
 
     keyword_case_sensitive = False
@@ -124,36 +86,22 @@ class CustomPicAction(BaseAction):
     # 动作参数定义（简化版，提示词优化由独立模块处理）
     action_parameters = {
         "description": "从用户消息中提取的图片描述文本（例如：用户说'画一只小猫'，则填写'一只小猫'）。必填参数。",
-        "model_id": """要使用的模型ID（如model1、model2、model3等）。
-        重要：需要从用户消息中提取模型ID！  
-        支持的自然语言表达方式：
-        - '用model3画一只猫' → 提取 'model3'
-        - 'model2生成图片' → 提取 'model2'
-        - '使用模型1发张自拍' → 提取 'model1'
-        - '用模型1'、'模型2画'、'模型3生成'等   
-        如果用户没有指定模型，则留空或填null（将使用默认模型）""",
+        "model_id": "要使用的模型ID（如model1、model2、model3等，默认使用default_model配置的模型）",
         "strength": "图生图强度，0.1-1.0之间，值越高变化越大（仅图生图时使用，可选，默认0.7）",
         "size": "图片尺寸，如512x512、1024x1024等（可选，不指定则使用模型默认尺寸）",
         "selfie_mode": "是否启用自拍模式（true/false，可选，默认false）。启用后会自动添加自拍场景和手部动作",
-        "selfie_style": "自拍风格，可选值：standard（标准自拍，适用于户外或无镜子场景），mirror（对镜自拍，适用于有镜子的室内场景）。仅在selfie_mode=true时生效，可选，默认standard",
-        "free_hand_action": "自由手部动作描述（英文）。如果指定此参数，将使用此动作而不是随机生成。仅在selfie_mode=true时生效，可选",
+        "selfie_style": "自拍风格，可选值：standard（标准自拍，前置摄像头视角），mirror（对镜自拍，室内镜子场景），photo（第三人称照片，他人拍摄视角，自然姿态）。仅在selfie_mode=true时生效，可选，默认standard",
+        "free_hand_action": "自由手部动作描述（英文）。如果指定此参数，将使用此动作而不是随机生成。仅在selfie_mode=true时生效，可选"
     }
 
     # 动作使用场景
     action_require = [
-        "当用户要求生成或修改图片时使用，不要频率太高",
+        "当用户明确对你提出生成或修改图片请求时使用，不要频率太高",
+        "群聊中必须是用户@你或叫你名字要求画图才使用，不要响应发给其他机器人的命令（如/nai、/sd等）",
         "自动检测是否有输入图片来决定文生图或图生图模式",
         "重点：不要连续发，如果你在前10句内已经发送过[图片]或者[表情包]或记录出现过类似描述的[图片]，就不要选择此动作",
-        # 新增说明
-        "【重要】模型指定规则：如果用户明确提到特定模型，必须在model_id参数中填写！",
-        "支持的表达方式（必须提取）：",
-        "  - '用model3画' → model_id='model3'",
-        "  - 'model2生成' → model_id='model2'",
-        "  - '使用模型1' → model_id='model1'",
-        "  - '用模型1发个自拍' → model_id='model1', selfie_mode=true",
-        "  - 类似'用...画'、'...生成'、'...发'等表达都要提取模型ID",
-        "  - 中文'模型1'、'模型2'、'模型3'对应 model1、model2、model3",
-        "如果用户没有指定任何模型，则model_id留空（将使用默认模型default_model）",
+        "支持指定模型：用户可以通过'用模型1画'、'model2生成'等方式指定特定模型",
+        "自拍模式选择：用户要求'自拍/拍个自拍'时用standard；要求'照镜子/对镜拍'时用mirror；要求'拍张照片/画一张你在XX的照片/第三人称'等非自拍视角时用photo"
     ]
     associated_types = ["text", "image"]
 
@@ -170,43 +118,66 @@ class CustomPicAction(BaseAction):
             self._api_clients[api_format] = client_class(self)
         return self._api_clients[api_format]
 
-    async def execute(self) -> Tuple[bool, Optional[str]]:
+    async def execute(self) -> Tuple[bool, str]:
         """执行统一图片生成动作"""
         logger.info(f"{self.log_prefix} 执行统一图片生成动作")
+
+        # 懒启动自动自拍任务（如果插件初始化时事件循环未就绪）
+        try:
+            from src.plugin_system.core.plugin_manager import plugin_manager  # pyright: ignore[reportMissingImports]
+            plugin_instance = plugin_manager.get_plugin_instance("selfie_painter_v2")
+            if plugin_instance:
+                startup_handler = getattr(plugin_instance, "try_start_auto_selfie", None)
+                if callable(startup_handler):
+                    startup_handler()
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            logger.debug(f"{self.log_prefix} 自动自拍懒启动检查失败（将忽略）: {exc}")
 
         # 检查是否是 /dr 命令消息，如果是则跳过（由 Command 组件处理）
         if self.action_message and self.action_message.processed_plain_text:
             message_text = self.action_message.processed_plain_text.strip()
-            # 修正：将第二个 if 放在第一个 if 内部，或者确保 message_text 总是被定义
             if message_text.startswith("/dr ") or message_text == "/dr":
                 logger.info(f"{self.log_prefix} 检测到 /dr 命令，跳过 Action 处理（由 Command 组件处理）")
                 return False, "跳过 /dr 命令"
 
         # 检查插件是否在当前聊天流启用
-        global_enabled = bool(self.get_config("plugin.enabled", True))
+        global_enabled: bool = bool(self.get_config("plugin.enabled", True))
         if not runtime_state.is_plugin_enabled(self.chat_id, global_enabled):
             logger.info(f"{self.log_prefix} 插件在当前聊天流已禁用")
-            # 修正：return 需要缩进在 if 内部
             return False, "插件已禁用"
 
         # 获取参数
-        description = (self.action_data.get("description") or "").strip()
-        model_id = (self.action_data.get("model_id") or "").strip()
+        description = self.action_data.get("description", "").strip()
+        model_id = self.action_data.get("model_id", "").strip()
         strength = self.action_data.get("strength", 0.7)
-        size = (self.action_data.get("size") or "").strip()
-        selfie_mode = self.action_data.get("selfie_mode", False)
-        selfie_style = (self.action_data.get("selfie_style") or "standard").strip().lower()
-        free_hand_action = (self.action_data.get("free_hand_action") or "").strip()
+        size = self.action_data.get("size", "").strip()
+        selfie_mode_raw = self.action_data.get("selfie_mode", False)
+        selfie_mode = selfie_mode_raw in (True, "true", "True", 1, "1")
+        selfie_style_llm = self.action_data.get("selfie_style", "").strip().lower()
+        free_hand_action = self.action_data.get("free_hand_action", "").strip()
+
+        # 自拍风格优先级：运行时命令设置 > LLM 指定 > 全局配置
+        global_style_raw: object = self.get_config("selfie.default_style", "standard")
+        global_style: str = global_style_raw if isinstance(global_style_raw, str) and global_style_raw else "standard"
+        runtime_style = runtime_state.get_selfie_style(self.chat_id, None)
+        if runtime_style is not None:
+            selfie_style = runtime_style
+        elif selfie_style_llm in ("standard", "mirror", "photo"):
+            selfie_style = selfie_style_llm
+        else:
+            selfie_style = global_style
 
         # 如果没有指定模型，使用运行时状态的默认模型
         if not model_id:
-            global_default = str(self.get_config("generation.default_model", "model1"))
+            global_default_raw: object = self.get_config("generation.default_model", "model1")
+            global_default: str = (
+                global_default_raw if isinstance(global_default_raw, str) and global_default_raw else "model1"
+            )
             model_id = runtime_state.get_action_default_model(self.chat_id, global_default)
 
         # 检查模型是否在当前聊天流启用
         if not runtime_state.is_model_enabled(self.chat_id, model_id):
             logger.warning(f"{self.log_prefix} 模型 {model_id} 在当前聊天流已禁用")
-            # 修正：缩进
             await self.send_text(f"模型 {model_id} 当前不可用")
             return False, f"模型 {model_id} 已禁用"
 
@@ -219,7 +190,6 @@ class CustomPicAction(BaseAction):
                 logger.info(f"{self.log_prefix} 从消息中提取到图片描述: {description}")
             else:
                 logger.warning(f"{self.log_prefix} 图片描述为空，无法生成图片。")
-                # 修正：缩进
                 await self.send_text("你需要告诉我想要画什么样的图片哦~ 比如说'画一只可爱的小猫'")
                 return False, "图片描述为空"
 
@@ -228,209 +198,71 @@ class CustomPicAction(BaseAction):
             description = description[:1000]
             logger.info(f"{self.log_prefix} 图片描述过长，已截断至1000字符")
 
-        # ============================================================
-        # 【智能参考搜索】新增代码块开始
-        # ============================================================
-
-        # 1. 检查配置里有没有开启这个功能
-        ref_search_enabled = self.get_config("search_reference.enabled", False)
-
-        # 2. 只有开启了功能，且不是自拍模式时才执行（避免冲突）
-        if ref_search_enabled and not selfie_mode:
-            logger.info(f"{self.log_prefix} 触发智能参考搜索: {description}")
-
-            try:
-                # 3. 调用图片搜索适配器去搜图
-                image_url = await ImageSearchAdapter.search(description, max_results=3)
-
-                # 如果搜到了图片链接
-                if image_url:
-                    features = ""
-
-                    # 4. 检查用户是否配置了自定义视觉模型
-                    v_api_key = str(self.get_config("search_reference.vision_api_key", "")).strip()
-
-                    if v_api_key:
-                        # 用户配置了自定义模型，使用 VisionAnalyzer
-                        from .vision_analyzer import VisionAnalyzer
-
-                        v_base_url = str(
-                            self.get_config("search_reference.vision_base_url", "https://api.openai.com/v1")
-                        )
-                        v_model = str(self.get_config("search_reference.vision_model", "gpt-4o"))
-
-                        logger.info(f"{self.log_prefix} 使用用户自定义视觉模型: {v_model}")
-                        analyzer = VisionAnalyzer(v_base_url, v_api_key, v_model)
-                        features = await analyzer.analyze_image(image_url)
-                    else:
-                        # 默认使用 MaiBot 的 vlm 模型（视觉语言模型）
-                        logger.info(f"{self.log_prefix} 使用 MaiBot 默认 vlm 模型")
-                        try:
-                            from src.llm_models.utils_model import LLMRequest
-                            from src.config.config import model_config as maibot_model_config
-
-                            # 下载图片并转为 Base64
-                            img_base64_data = None
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                                    if resp.status == 200:
-                                        image_bytes = await resp.read()
-                                        img_base64_data = base64.b64encode(image_bytes).decode("utf-8")
-                                    else:
-                                        logger.warning(f"{self.log_prefix} 下载参考图片失败: {resp.status}")
-
-                            if img_base64_data:
-                                # 使用 MaiBot 的 vlm 模型分析图片
-                                vlm_request = LLMRequest(
-                                    model_set=maibot_model_config.model_task_config.vlm,
-                                    request_type="plugin.search_reference.vision_analyze",
-                                )
-
-                                # 构造视觉分析的 prompt
-                                vision_prompt = (
-                                    "请详细分析这张图片中的角色视觉特征。"
-                                    "提取关键特征并转化为 Stable Diffusion 格式的英文提示词（Tag）。"
-                                    "包括但不限于：发色、瞳色、发型、服装、配饰、姿势、背景风格等。"
-                                    "只需返回提示词，不要包含任何解释性文字。"
-                                )
-
-                                # 调用 vlm 的 generate_response_for_image 方法
-                                # 根据图片 URL 判断格式，默认为 jpeg
-                                img_format = "jpeg"
-                                if image_url.lower().endswith(".png"):
-                                    img_format = "png"
-                                elif image_url.lower().endswith(".webp"):
-                                    img_format = "webp"
-                                elif image_url.lower().endswith(".gif"):
-                                    img_format = "gif"
-
-                                result = await vlm_request.generate_response_for_image(
-                                    prompt=vision_prompt, image_base64=img_base64_data, image_format=img_format
-                                )
-
-                                # 解析返回结果
-                                if result and len(result) >= 1:
-                                    features = result[0] if result[0] else ""
-                                    if features:
-                                        logger.info(f"{self.log_prefix} VLM 分析成功: {features[:100]}...")
-
-                        except Exception as vlm_e:
-                            logger.warning(f"{self.log_prefix} MaiBot vlm 模型分析失败: {vlm_e}")
-                            features = ""
-
-                    # 5. 如果分析成功，就把特征拼接到用户的描述里
-                    if features:
-                        # 拼接格式：原描述, (提取的特征:1.3)
-                        # 1.3 是权重，表示让模型更重视这些特征
-                        description = f"{description}, ({features}:1.3)"
-
-            except Exception as e:
-                # 如果中间出错了（比如网络断了），记录日志，但不要让整个程序崩掉
-                logger.error(f"{self.log_prefix} 智能参考搜索出错: {e}", exc_info=True)
-                # 即使出错，也继续往下跑，让用户至少能拿到一张普通的图
-
-        # ============================================================
-        # 【智能参考搜索】新增代码块结束
-        # ============================================================
-
-        # 提示词优化
-        # 【v3.5.0-beta.7 修复】自拍模式下使用 exclude_hand_actions=True，
-        # 让优化器不生成手部动作描述，避免与 _process_selfie_prompt 随机选择的手部动作冲突
-        optimizer_enabled = self.get_config("prompt_optimizer.enabled", True)
+        # 提示词优化（自拍模式仅优化场景/环境，不生成角色外观）
+        optimizer_enabled: bool = bool(self.get_config("prompt_optimizer.enabled", True))
         if optimizer_enabled:
-            logger.info(f"{self.log_prefix} 开始优化提示词: {description}")  # 显示所有提示词
-            # 自拍模式下排除手部动作描述，由 _process_selfie_prompt 统一控制
+            scene_only = bool(selfie_mode)
+            mode_label = "场景提示词" if scene_only else "提示词"
+            logger.info(f"{self.log_prefix} 开始优化{mode_label}: {description[:50]}...")
+            # 读取自定义 API 配置
+            custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
+            custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
+            custom_model: str = str(self.get_config("prompt_optimizer.custom_api_model", ""))
             success, optimized_prompt = await optimize_prompt(
                 description,
                 self.log_prefix,
-                exclude_hand_actions=selfie_mode,  # 自拍模式时为 True
+                scene_only=scene_only,
+                custom_api_base_url=custom_base_url,
+                custom_api_key=custom_api_key,
+                custom_api_model=custom_model,
             )
-            # 修正：if success 需要缩进在 optimizer_enabled if 内部
             if success:
-                logger.info(f"{self.log_prefix} 提示词优化完成: {optimized_prompt}")  # 显示所有提示词
+                logger.info(f"{self.log_prefix} {mode_label}优化完成: {optimized_prompt[:80]}...")
                 description = optimized_prompt
             else:
-                logger.warning(f"{self.log_prefix} 提示词优化失败，使用原始描述: {description}")  # 显示所有提示词
+                logger.warning(f"{self.log_prefix} {mode_label}优化失败，使用原始描述: {description[:50]}...")
 
         # 验证strength参数
         try:
-            strength = float(strength)
-            # 修正：if 检查需要缩进在 try 内部
+            strength = float(strength)  # pyright: ignore[reportArgumentType]
             if not (0.1 <= strength <= 1.0):
                 strength = 0.7
         except (ValueError, TypeError):
             strength = 0.7
 
-        # 👇【新增修复代码】在这里初始化变量，给一个空字符串作为默认值
-        selfie_negative_prompt = ""
-
         # 处理自拍模式
+        selfie_negative_prompt = None
         if selfie_mode:
             # 检查自拍功能是否启用
-            # 修正：缩进
             selfie_enabled = self.get_config("selfie.enabled", True)
             if not selfie_enabled:
-                # 修正：缩进
                 await self.send_text("自拍功能暂未启用~")
                 return False, "自拍功能未启用"
 
             logger.info(f"{self.log_prefix} 启用自拍模式，风格: {selfie_style}")
 
-            # 【新增】检查是否启用了自动自拍功能，如果启用则尝试读取当前日程
-            schedule_entry: Optional["ScheduleEntry"] = None
-            auto_selfie_enabled = self.get_config("auto_selfie.enabled", False)
+            # 尝试获取日程活动信息（增强场景上下文）
+            activity_scene = None
+            global_selfie_schedule: bool = bool(self.get_config("selfie.schedule_enabled", True))
+            selfie_schedule_on = runtime_state.is_selfie_schedule_enabled(self.chat_id, global_selfie_schedule)
+            if selfie_schedule_on:
+                try:
+                    from .selfie.schedule_provider import get_schedule_provider
+                    from .selfie.scene_action_generator import generate_scene_with_llm, get_action_for_activity
+                    provider = get_schedule_provider()
+                    activity = await provider.get_current_activity()
+                    # 优先使用 LLM 生成场景，失败时回退到确定性映射
+                    activity_scene = await generate_scene_with_llm(activity, selfie_style)
+                    if activity_scene:
+                        logger.info(f"{self.log_prefix} LLM 生成日程场景: {activity.activity_type.value}")
+                    else:
+                        activity_scene = get_action_for_activity(activity)
+                        logger.info(f"{self.log_prefix} LLM 失败，使用确定性映射: {activity.activity_type.value}")
+                except Exception as e:
+                    logger.debug(f"{self.log_prefix} 获取日程活动失败（非必要）: {e}")
 
-            if auto_selfie_enabled:
-                # 尝试获取当前时间对应的日程条目
-                schedule_entry = await self._get_current_schedule_entry()
-                if schedule_entry:
-                    logger.info(
-                        f"{self.log_prefix} 用户手动请求自拍，读取到日程条目: "
-                        f"{schedule_entry.time_point} - {schedule_entry.activity_description}"
-                    )
-                else:
-                    logger.info(f"{self.log_prefix} 用户手动请求自拍，当前时间无匹配日程，使用传统模式")
-            else:
-                logger.debug(f"{self.log_prefix} 自动自拍未启用，使用传统自拍模式")
-
-            # 调用 _process_selfie_prompt，传入日程条目（如果有）
-            description = self._process_selfie_prompt(
-                description, selfie_style, free_hand_action, model_id, schedule_entry
-            )
-            logger.info(f"{self.log_prefix} 自拍模式处理后的提示词: {description}")  # 显示所有提示词
-
-            # 👇 读取自拍专用负面提示词（从配置读取基础负面词） 👇
-            selfie_negative_prompt = str(self.get_config("selfie.negative_prompt", "")).strip()
-
-            # 👇 【修复双手问题】standard模式专用负面提示词，防止生成两只手 👇
-            if selfie_style == "standard":
-                # 定义防止双手/双臂的负面提示词
-                standard_anti_dual_hands = (
-                    # 防止双手持机
-                    "two phones, camera in both hands, holding phone with both hands, "
-                    "extra hands, extra arms, 3 hands, 4 hands, multiple hands, "
-                    "both hands holding phone, two hands on phone, "
-                    # 防止手机出现在画面中
-                    "phone in frame, visible phone in hand, phone screen visible, "
-                    "floating phone, phone reflection, smartphone visible, "
-                    # 防止两只手都出现
-                    "both hands visible, two hands making gesture, "
-                    "holding device with two hands, dual arm selfie, "
-                    "symmetrical hands, mirrored hands, "
-                    # 防止持机手边缘可见（新增）
-                    "hand at edge of frame, hand entering frame from side, "
-                    "partial hand visible at edge, hand reaching into frame, "
-                    "fingers at edge of frame, palm at edge, "
-                    "hand extending from outside frame, arm entering frame, "
-                    "hand peeking from edge, visible phone holding hand"
-                )
-                # 合并：用户配置的负面词 + standard模式专用防双手词
-                if selfie_negative_prompt:
-                    selfie_negative_prompt = f"{selfie_negative_prompt}, {standard_anti_dual_hands}"
-                else:
-                    selfie_negative_prompt = standard_anti_dual_hands
-                logger.info(f"{self.log_prefix} 已应用standard模式防双手负面提示词")
-            # 👆 【修复双手问题】结束 👆
+            description, selfie_negative_prompt = await self._process_selfie_prompt(description, selfie_style, free_hand_action, model_id, activity_scene)
+            logger.info(f"{self.log_prefix} 自拍模式处理后的提示词: {description[:100]}...")
 
             # 检查是否配置了参考图片
             reference_image = self._get_selfie_reference_image()
@@ -439,12 +271,13 @@ class CustomPicAction(BaseAction):
                 model_config = self._get_model_config(model_id)
                 if model_config and model_config.get("support_img2img", True):
                     logger.info(f"{self.log_prefix} 使用自拍参考图片进行图生图")
-                    return await self._execute_unified_generation(
-                        description, model_id, size, strength or 0.6, reference_image, selfie_negative_prompt
-                    )  # 修改：增加selfie_negative_prompt
+                    return await self._execute_unified_generation(description, model_id, size, strength or 0.6, reference_image, extra_negative_prompt=selfie_negative_prompt)
                 else:
                     logger.warning(f"{self.log_prefix} 模型 {model_id} 不支持图生图，自拍回退为文生图模式")
-            # 无参考图或模型不支持，继续使用文生图（向下执行）
+            # 无参考图或模型不支持，继续使用文生图（带负面提示词）
+
+        # 收集自拍模式的额外负面提示词（如果启用了自拍模式）
+        extra_neg = selfie_negative_prompt if selfie_mode else None
 
         # **智能检测：判断是文生图还是图生图**
         input_image_base64 = await self.image_processor.get_recent_image()
@@ -456,151 +289,65 @@ class CustomPicAction(BaseAction):
             if model_config and not model_config.get("support_img2img", True):
                 logger.warning(f"{self.log_prefix} 模型 {model_id} 不支持图生图，转为文生图模式")
                 await self.send_text(f"当前模型 {model_id} 不支持图生图功能，将为您生成新图片")
-                return await self._execute_unified_generation(description, model_id, size, None, None)
+                return await self._execute_unified_generation(description, model_id, size, None, None, extra_negative_prompt=extra_neg)
 
             logger.info(f"{self.log_prefix} 检测到输入图片，使用图生图模式")
-            return await self._execute_unified_generation(description, model_id, size, strength, input_image_base64)
+            return await self._execute_unified_generation(description, model_id, size, strength, input_image_base64, extra_negative_prompt=extra_neg)
         else:
             logger.info(f"{self.log_prefix} 未检测到输入图片，使用文生图模式")
-            return await self._execute_unified_generation(
-                description, model_id, size, None, None, selfie_negative_prompt
-            )  # 修改：增加selfie_negative_prompt
+            return await self._execute_unified_generation(description, model_id, size, None, None, extra_negative_prompt=extra_neg)
 
-    # 👇 新增参数 extra_negative_prompt: str = None
-    async def _execute_unified_generation(
-        self,
-        description: str,
-        model_id: str,
-        size: str,
-        strength: Optional[float] = None,
-        input_image_base64: Optional[str] = None,
-        extra_negative_prompt: Optional[str] = None,
-    ) -> Tuple[bool, Optional[str]]:
-        """统一的图片生成执行方法"""
-        # 调用内部方法生成图片
-        success, image_data, error_msg = await self._generate_image_internal(
-            description=description,
-            model_id=model_id,
-            size=size,
-            strength=strength,
-            input_image_base64=input_image_base64,
-            extra_negative_prompt=extra_negative_prompt,
-        )
-
-        if not success or not image_data:
-            is_img2img = input_image_base64 is not None
-            mode_text = "图生图" if is_img2img else "文生图"
-            await self.send_text(f"哎呀，{mode_text}时遇到问题：{error_msg}")
-            return False, f"{mode_text}失败: {error_msg}"
-
-        # 发送图片
-        is_img2img = input_image_base64 is not None
-        enable_debug = self.get_config("components.enable_debug_info", False)
-
-        send_success = await self.send_image(image_data)
-        if send_success:
-            mode_text = "图生图" if is_img2img else "文生图"
-            if enable_debug:
-                await self.send_text(f"{mode_text}完成！")
-            # 缓存成功的结果
-            model_config = self._get_model_config(model_id)
-            model_name = model_config.get("model", "default-model") if model_config else "default-model"
-            image_size = size or model_config.get("default_size", "1024x1024") if model_config else "1024x1024"
-            self.cache_manager.cache_result(description, model_name, image_size, strength, is_img2img, image_data)
-            # 安排自动撤回（如果该模型启用）
-            await self._schedule_auto_recall_for_recent_message(model_config)
-            return True, f"{mode_text}已成功生成并发送"
-        else:
-            await self.send_text("图片已处理完成，但发送失败了")
-            return False, "图片发送失败"
-
-    async def _generate_image_only(
-        self,
-        description: str,
-        model_id: str,
-        size: str,
-        strength: Optional[float] = None,
-        input_image_base64: Optional[str] = None,
-        extra_negative_prompt: Optional[str] = None,
-    ) -> Optional[str]:
-        """仅生成图片，返回 base64 编码，不发送
-
-        用于自动自拍任务的"生成一次，发送多次"模式
+    async def _execute_unified_generation(self, description: str, model_id: str, size: str, strength: Optional[float] = None, input_image_base64: Optional[str] = None, extra_negative_prompt: Optional[str] = None) -> Tuple[bool, str]:
+        """统一的图片生成执行方法
 
         Args:
-            description: 图片描述
-            model_id: 模型ID
-            size: 图片尺寸
-            strength: 图生图强度
-            input_image_base64: 输入图片的 base64 编码
-            extra_negative_prompt: 额外的负面提示词
-
-        Returns:
-            Optional[str]: 图片的 base64 编码，失败返回 None
-        """
-        success, image_data, error_msg = await self._generate_image_internal(
-            description=description,
-            model_id=model_id,
-            size=size,
-            strength=strength,
-            input_image_base64=input_image_base64,
-            extra_negative_prompt=extra_negative_prompt,
-        )
-
-        if success and image_data:
-            return image_data
-        else:
-            logger.warning(f"{self.log_prefix} 图片生成失败: {error_msg}")
-            return None
-
-    async def _generate_image_internal(
-        self,
-        description: str,
-        model_id: str,
-        size: str,
-        strength: Optional[float] = None,
-        input_image_base64: Optional[str] = None,
-        extra_negative_prompt: Optional[str] = None,
-    ) -> Tuple[bool, Optional[str], str]:
-        """内部图片生成方法，返回 (成功, 图片base64, 错误信息)
-
-        注意：此方法只生成图片，不发送。发送由调用者负责。
+            model_id: 模型ID，如 model1、model2
+            extra_negative_prompt: 额外负面提示词（如自拍模式的手部质量负面提示词），会合并到模型配置的 negative_prompt_add
         """
 
         # 获取模型配置
         model_config = self._get_model_config(model_id)
         if not model_config:
-            error_msg = f"指定的模型 '{model_id}' 不存在或配置无效"
+            error_msg = f"指定的模型 '{model_id}' 不存在或配置无效，请检查配置文件。"
+            await self.send_text(error_msg)
             logger.error(f"{self.log_prefix} 模型配置获取失败: {model_id}")
-            return False, None, error_msg
+            return False, "模型配置无效"
 
         # 配置验证
         http_base_url = model_config.get("base_url")
         http_api_key = model_config.get("api_key")
-        if not (http_base_url and http_api_key):
-            error_msg = "HTTP配置不完整（缺少base_url或api_key）"
-            logger.error(f"{self.log_prefix} HTTP调用配置缺失: base_url 或 api_key.")
-            return False, None, error_msg
+        api_format = model_config.get("format", "openai")
+        
+        # 检查base_url
+        if not http_base_url:
+            error_msg = "抱歉，图片生成功能所需的HTTP配置（如API地址）不完整，无法提供服务。"
+            await self.send_text(error_msg)
+            logger.error(f"{self.log_prefix} HTTP调用配置缺失: base_url.")
+            return False, "HTTP配置不完整"
+        
+        # 检查api_key（comfyui格式允许为空）
+        if api_format != "comfyui" and not http_api_key:
+            error_msg = "抱歉，图片生成功能所需的HTTP配置（如API密钥）不完整，无法提供服务。"
+            await self.send_text(error_msg)
+            logger.error(f"{self.log_prefix} HTTP调用配置缺失: api_key.")
+            return False, "HTTP配置不完整"
 
-        # API密钥验证
-        if "YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key:
-            error_msg = "API密钥未配置"
+        # API密钥验证（comfyui格式不需要API密钥）
+        if api_format != "comfyui" and isinstance(http_api_key, str) and (
+            "YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key
+        ):
+            error_msg = "图片生成功能尚未配置，请设置正确的API密钥。"
+            await self.send_text(error_msg)
             logger.error(f"{self.log_prefix} API密钥未配置")
-            return False, None, error_msg
+            return False, "API密钥未配置"
 
         # 获取模型配置参数
         model_name = model_config.get("model", "default-model")
-        api_format = model_config.get("format", "openai")
 
-        # 合并负面提示词
+        # 合并额外的负面提示词（如自拍手部质量负面提示词）
         if extra_negative_prompt:
-            # 复制一份配置，避免修改原始配置影响后续调用
-            model_config = dict(model_config)
-            original_neg = model_config.get("negative_prompt_add", "")
-            # 合并：原有负面词 + 自拍专用负面词
-            combined_neg = f"{original_neg}, {extra_negative_prompt}".strip(", ")
-            model_config["negative_prompt_add"] = combined_neg
-            logger.info(f"{self.log_prefix} 已应用自拍专用负面提示词: {extra_negative_prompt[:50]}...")
+            model_config = merge_negative_prompt(model_config, extra_negative_prompt)
+            logger.info(f"{self.log_prefix} 合并额外负面提示词: {extra_negative_prompt[:80]}...")
 
         # 使用统一的尺寸处理逻辑
         image_size, llm_original_size = get_image_size(model_config, size, self.log_prefix)
@@ -616,13 +363,26 @@ class CustomPicAction(BaseAction):
 
         if cached_result:
             logger.info(f"{self.log_prefix} 使用缓存的图片结果")
-            return True, cached_result, ""
+            enable_debug = self.get_config("components.enable_debug_info", False)
+            if enable_debug:
+                await self.send_text("我之前画过类似的图片，用之前的结果~")
+            send_success = await self.send_image(cached_result)
+            if send_success:
+                return True, "图片已发送(缓存)"
+            else:
+                self.cache_manager.remove_cached_result(description, model_name, image_size, strength, is_img2img)
+
+        # 显示处理信息
+        enable_debug = self.get_config("components.enable_debug_info", False)
+        if enable_debug:
+            mode_text = "图生图" if is_img2img else "文生图"
+            await self.send_text(
+                f"收到！正在为您使用 {model_id or '默认'} 模型进行{mode_text}，描述: '{description}'，请稍候...（模型: {model_name}, 尺寸: {image_size}）"
+            )
 
         try:
             # 对于 Gemini/Zai 格式，将原始 LLM 尺寸添加到 model_config 中
-            if api_format in ("gemini", "zai") and llm_original_size:
-                model_config = dict(model_config)  # 创建副本避免修改原配置
-                model_config["_llm_original_size"] = llm_original_size
+            model_config = inject_llm_original_size(model_config, llm_original_size or "")
 
             # 获取重试次数配置
             max_retries = self.get_config("components.max_retries", 2)
@@ -635,215 +395,237 @@ class CustomPicAction(BaseAction):
                 size=image_size,
                 strength=strength,
                 input_image_base64=input_image_base64,
-                max_retries=max_retries,
+                max_retries=max_retries
             )
         except Exception as e:
             logger.error(f"{self.log_prefix} 异步请求执行失败: {e!r}", exc_info=True)
-            traceback.print_exc()
-            return False, None, f"图片生成服务遇到意外问题: {str(e)[:100]}"
+            success = False
+            result = f"图片生成服务遇到意外问题: {str(e)[:100]}"
 
-        if success and result:
+        if success:
             final_image_data = self.image_processor.process_api_response(result)
 
             if final_image_data:
-                if final_image_data.startswith(("iVBORw", "/9j/", "UklGR", "R0lGOD")):  # Base64
-                    # 缓存成功的结果
-                    self.cache_manager.cache_result(
-                        description, model_name, image_size, strength, is_img2img, final_image_data
-                    )
-                    return True, final_image_data, ""
-                else:  # URL - 需要下载转换为 base64
-                    try:
-                        encode_success, encode_result = await asyncio.to_thread(
-                            self.image_processor.download_and_encode_base64, final_image_data
-                        )
-                        if encode_success and encode_result:
-                            # 缓存成功结果
-                            self.cache_manager.cache_result(
-                                description, model_name, image_size, strength, is_img2img, encode_result
-                            )
-                            return True, encode_result, ""
-                        else:
-                            return False, None, f"图片处理失败: {encode_result}"
-                    except Exception as e:
-                        logger.error(f"{self.log_prefix} 图片下载编码失败: {e!r}")
-                        return False, None, "图片下载失败"
+                resolved_ok, resolved_data = await resolve_image_data(
+                    final_image_data, self._download_and_encode_base64, self.log_prefix
+                )
+                if resolved_ok:
+                    send_timestamp = time_module.time()
+                    send_success = await self.send_image(resolved_data)
+                    if send_success:
+                        mode_text = "图生图" if is_img2img else "文生图"
+                        if enable_debug:
+                            await self.send_text(f"{mode_text}完成！")
+                        self.cache_manager.cache_result(description, model_name, image_size, strength, is_img2img, resolved_data)
+                        await self._schedule_auto_recall_for_recent_message(model_config, model_id, send_timestamp)
+                        return True, f"{mode_text}已成功生成并发送"
+                    else:
+                        await self.send_text("图片已处理完成，但发送失败了")
+                        return False, "图片发送失败"
+                else:
+                    await self.send_text(f"图片处理失败：{resolved_data}")
+                    return False, f"图片处理失败: {resolved_data}"
             else:
-                return False, None, "API返回数据格式错误"
+                await self.send_text("图片生成API返回了无法处理的数据格式")
+                return False, "API返回数据格式错误"
         else:
-            is_img2img = input_image_base64 is not None
             mode_text = "图生图" if is_img2img else "文生图"
-            return False, None, f"{mode_text}失败: {result}"
+            await self.send_text(f"哎呀，{mode_text}时遇到问题：{result}")
+            return False, f"{mode_text}失败: {result}"
 
-    def _get_model_config(self, model_id: Optional[str] = None) -> Dict[str, Any]:
+    def _get_model_config(self, model_id: str | None = None) -> Dict[str, Any]:
         """获取指定模型的配置，支持热重载"""
-        # 如果没有指定模型ID，使用默认模型
         if not model_id:
-            model_id = str(self.get_config("generation.default_model", "model1"))
+            model_id_raw: object = self.get_config("generation.default_model", "model1")
+            model_id = model_id_raw if isinstance(model_id_raw, str) and model_id_raw else "model1"
+        default_model_id_raw: object = self.get_config("generation.default_model", "model1")
+        default_model_id: str = (
+            default_model_id_raw if isinstance(default_model_id_raw, str) and default_model_id_raw else "model1"
+        )
+        return get_model_config(self.get_config, model_id, default_model_id, self.log_prefix) or {}
 
-        # 构建模型配置的路径
-        model_config_path = f"models.{model_id}"
-        model_config = self.get_config(model_config_path)
+    def _download_and_encode_base64(self, image_url: str) -> Tuple[bool, str]:
+        """下载图片并转换为base64（带代理支持）"""
+        if self.get_config("proxy.enabled", False):
+            proxy_url = self.get_config("proxy.url", "http://127.0.0.1:7890")
+            return self.image_processor.download_and_encode_base64(image_url, proxy_url=str(proxy_url))
 
-        if not model_config:
-            logger.warning(f"{self.log_prefix} 模型 {model_id} 配置不存在，尝试使用默认模型")
-            # 尝试获取默认模型
-            default_model_id = self.get_config("generation.default_model", "model1")
-            if default_model_id != model_id:
-                model_config = self.get_config(f"models.{default_model_id}")
-
-        if isinstance(model_config, dict):
-            return model_config
-        return {}
+        # 下层实现的参数类型声明不是 Optional[str]，这里用空字符串表示“无代理”。
+        return self.image_processor.download_and_encode_base64(image_url, proxy_url="")
 
     def _validate_image_size(self, size: str) -> bool:
         """验证图片尺寸格式是否正确（委托给size_utils）"""
         return validate_image_size(size)
 
-    def _process_selfie_prompt(
+    async def _process_selfie_prompt(
         self,
         description: str,
         selfie_style: str,
         free_hand_action: str,
         model_id: str,
-        schedule_entry: Optional["ScheduleEntry"] = None,
-    ) -> str:
+        activity_scene: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, str]:
         """处理自拍模式的提示词生成
 
         Args:
-            description: 场景描述
-            selfie_style: 自拍风格 ("standard" 或 "mirror")
-            free_hand_action: 自由手部动作（如果指定）
-            model_id: 模型ID
-            schedule_entry: 可选的日程条目，如果提供则使用场景驱动方式生成提示词
+            description: 用户提供的描述
+            selfie_style: 自拍风格（standard/mirror/photo）
+            free_hand_action: LLM生成的手部动作（可选）
+            model_id: 模型ID（保留参数，用于后续扩展）
+            activity_scene: 日程活动场景数据（含 hand_action, environment, expression, lighting），无日程时为 None
 
         Returns:
-            完整的自拍提示词
+            (prompt, negative_prompt) 元组：处理后的正面提示词和负面提示词
         """
         import random
-        import re  # 导入正则库，用于清理冲突词
 
-        # 如果提供了 schedule_entry，使用新的场景驱动方式生成提示词
-        if schedule_entry is not None:
-            try:
-                from .scene_action_generator import SceneActionGenerator
+        # 1. 添加强制主体设置（含手部质量引导）
+        forced_subject = "(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)"
 
-                generator = SceneActionGenerator(self)
-                scene_prompt = generator.convert_to_sd_prompt(schedule_entry, selfie_style)
+        # 2. 从独立的selfie配置中获取Bot的默认形象特征（不再从模型配置中获取）
+        bot_appearance_raw: object = self.get_config("selfie.prompt_prefix", "")
+        bot_appearance = (bot_appearance_raw.strip() if isinstance(bot_appearance_raw, str) else "")
 
-                # 如果 description 中有额外内容，合并
-                # Phase 3：支持外部传入“变体 prompt”（在 smart 模式下会传入 entry.create_variation_prompt(...)）。
-                # 约定：当 description 形如 "(1girl:1.4), ..." 或包含 "front camera view" 时，
-                # 认为它已经是完整 SD prompt，直接覆盖 scene_prompt。
-                if description and description.strip() and description.strip() != "auto selfie":
-                    desc = description.strip()
-                    if ("front camera view" in desc.lower()) or desc.startswith("(1girl") or desc.startswith("(solo"):
-                        scene_prompt = desc
+        # 2.1 可选：注入衣柜系统选择的穿搭 prompt（只影响自拍，不影响 /dr 普通画图）
+        # 注入点要求：必须在 bot_appearance append 到 prompt_parts 之前完成。
+        try:
+            wardrobe_enabled: bool = bool(self.get_config("wardrobe.enabled", False))
+            if wardrobe_enabled:
+                from .wardrobe.selector import (
+                    build_simple_wardrobe_config,
+                    load_temp_override,
+                    select_outfit_from_schedule,
+                )
+                from .selfie.schedule_provider import get_schedule_provider
+
+                wardrobe_config_simple = build_simple_wardrobe_config(self.get_config)
+                current_override: str = await load_temp_override()
+
+                # 获取当前活动
+                try:
+                    provider = get_schedule_provider()
+                    current_activity = await provider.get_current_activity()
+                except Exception:
+                    current_activity = None
+
+                outfit_prompt: str = select_outfit_from_schedule(
+                    schedule_item=current_activity,
+                    wardrobe_config=wardrobe_config_simple,
+                    temp_override=current_override,
+                )
+
+                if outfit_prompt:
+                    logger.info(f"{self.log_prefix} 衣柜：选择穿搭 → {outfit_prompt}")
+                    if not bot_appearance:
+                        bot_appearance = outfit_prompt
                     else:
-                        # 将用户描述追加到场景提示词后面
-                        scene_prompt = f"{scene_prompt}, {desc}"
-
-                logger.info(f"{self.log_prefix} 使用场景驱动方式生成提示词 (activity: {schedule_entry.activity_type})")
-                return scene_prompt
-
-            except Exception as e:
-                logger.warning(f"{self.log_prefix} 场景驱动提示词生成失败，回退到传统方式: {e}")
-                # 回退到传统方式
-
-        # 原有逻辑（向后兼容）
-
-        # 1. 添加强制主体设置（只保留单人约束，不强制性别）
-        # 性别由用户在 selfie.prompt_prefix 中自行配置
-        forced_subject = "(solo:1.3)"
-
-        # 2. 从独立的selfie配置中获取Bot的默认形象特征
-        # 用户应在此配置中指定性别，如 "1girl" 或 "1boy"
-        bot_appearance = str(self.get_config("selfie.prompt_prefix", "")).strip()
-
-        # 3. 定义自拍风格特定的场景设置（通用版：适用于真实风格和二次元风格）
+                        bot_appearance = f"{bot_appearance}, {outfit_prompt}"
+                else:
+                    logger.debug(f"{self.log_prefix} 衣柜：未匹配到穿搭")
+        except Exception as exc:
+            # 衣柜属于"增强项"，任何异常都不应影响自拍主流程
+            logger.warning(f"{self.log_prefix} 衣柜：注入穿搭失败，将忽略: {exc}")
+        # 3. 定义自拍风格特定的场景设置
         if selfie_style == "mirror":
-            # 对镜自拍：强调倒影、手机在手、室内场景
-            default_mirror = "mirror selfie, reflection in mirror, holding phone in hand, phone visible, arm slightly bent, looking at mirror, indoor scene, soft lighting, high quality"
-            selfie_scene = str(self.get_config("selfie.scene_mirror", default_mirror))
+            # 对镜自拍风格：镜中出现拍照设备，全身或半身
+            selfie_scene = (
+                "mirror selfie, reflection in mirror, "
+                "holding phone in hand, phone visible, "
+                "looking at mirror, indoor scene"
+            )
+        elif selfie_style == "photo":
+            # 第三人称照片风格：他人拍摄视角，自然姿态，不出现拍照设备
+            selfie_scene = (
+                "photo, candid shot, natural pose, "
+                "full body or upper body, "
+                "looking away or at camera, "
+                "(natural composition:1.2)"
+            )
         else:
-            # 前置自拍：强调场景和视角（手部约束由 hand_action 处理）
-            # 精简版：移除与 hand_action 重复的手部描述
-            default_standard = (
+            # 标准自拍风格：前置摄像头视角，握持设备的手臂延伸到画面之外
+            selfie_scene = (
                 "selfie, front camera view, POV selfie, "
                 "(front facing selfie camera angle:1.3), "
                 "looking at camera, slight high angle selfie, "
+                "(phone-holding arm out of frame:1.3), "
                 "upper body shot, cowboy shot, "
                 "(centered composition:1.2)"
             )
-            selfie_scene = str(self.get_config("selfie.scene_standard", default_standard))
 
-        # 4. 从外部文件加载手部动作库（支持用户自定义）
-        hand_actions = self._load_hand_actions()
-
-        # 5. 选择手部动作
+        # 4. 选择手部动作（优先级：LLM参数 > 日程场景 > LLM按描述生成 > 风格动作池兜底）
         if free_hand_action:
             hand_action = free_hand_action
+            logger.info(f"{self.log_prefix} 使用LLM生成的手部动作: {free_hand_action}")
+        elif activity_scene and activity_scene.get("hand_action"):
+            hand_action = activity_scene["hand_action"]
+            logger.info(f"{self.log_prefix} 使用日程活动动作: {hand_action}")
         else:
-            hand_action = random.choice(hand_actions)
+            hand_action = None
+            # 描述足够具体时才调 LLM 生成手部动作，太短/太泛直接走动作池
+            # 注意此处 description 可能是优化器处理后的英文，也可能是优化失败的中文原文
+            # 英文: "cafe, warm" ≈10字符; 中文: "在咖啡厅" = 4字符
+            # 用 3 个中文字 / 6 个英文字符 作为阈值
+            desc_clean = description.strip().strip(",. 、，。")
+            desc_long_enough = len(desc_clean) > 3 if any('\u4e00' <= c <= '\u9fff' for c in desc_clean) else len(desc_clean) > 6
+            if desc_long_enough:
+                try:
+                    from .selfie.scene_action_generator import generate_hand_action_with_llm
+                    hand_action = await generate_hand_action_with_llm(description, selfie_style)
+                    if hand_action:
+                        logger.info(f"{self.log_prefix} LLM 生成{selfie_style}风格手部动作: {hand_action[:60]}")
+                except Exception as e:
+                    logger.debug(f"{self.log_prefix} LLM 手部动作生成失败: {e}")
+            # LLM 未调用或失败，从动作池兜底
+            if not hand_action:
+                hand_action = random.choice(self._get_hand_actions_for_style(selfie_style))
+                logger.info(f"{self.log_prefix} 动作池随机{selfie_style}风格: {hand_action}")
 
-        # 👇 修复双手问题：在standard模式下，明确描述自由手动作，强调持机手完全不可见 👇
-        if selfie_style == "standard":
-            # 构建自由手动作描述（明确是"可见的那只手"在做动作）
-            hand_action = (
-                f"(visible free hand {hand_action}:1.4), "  # 自由手在做的动作
-                "(only one hand visible in frame:1.6), "  # 画面中只能看到一只手（权重提高）
-                "(single hand gesture:1.4), "  # 单手手势
-                "(other hand completely outside frame:1.7), "  # 另一只手完全在画面外（权重提高）
-                "(phone holding hand not visible at all:1.6), "  # 持机手完全不可见（新增）
-                "(arm holding device fully cropped:1.5), "  # 持机手臂完全被裁切（新增）
-                "(no part of phone hand visible:1.5), "  # 持机手任何部分都不可见（新增）
-                "(selfie POV with one arm extended outside:1.4), "  # 自拍视角，手臂伸出画面外
-                "(front camera perspective:1.2), "  # 前置摄像头视角
-                "(subject centered in frame:1.3)"  # 人物居中构图（新增）
-            )
-        # 👆 修复双手问题结束 👆
-
-        # 6. 组装完整提示词
+        # 5. 组装完整提示词
         prompt_parts = [forced_subject]
 
         if bot_appearance:
             prompt_parts.append(bot_appearance)
 
-        prompt_parts.extend(
-            [
-                hand_action,
-                selfie_scene,
-                description,  # 这里包含了优化器加的 "holding a smartphone"
-            ]
-        )
+        # 日程活动的表情和光线（如果有）
+        if activity_scene:
+            if activity_scene.get("expression"):
+                prompt_parts.append(f"({activity_scene['expression']}:1.2)")
+            if activity_scene.get("lighting"):
+                prompt_parts.append(activity_scene["lighting"])
 
-        # 7. 合并
+        # 6. 手部动作处理：过滤不当词汇 + 按风格加权重
+        import re as _re
+        # standard 模式过滤手机类词汇（LLM 可能返回含 phone 的动作）
+        if selfie_style == "standard" and hand_action:
+            if _re.search(r"\b(phone|smartphone|mobile|device)\b", hand_action, flags=_re.IGNORECASE):
+                hand_action = "resting head on hand"
+
+        if hand_action:
+            if selfie_style == "standard":
+                hand_prompt = (
+                    f"(visible free hand {hand_action}:1.4), "
+                    "(only one hand visible in frame:1.5), "
+                    "(single hand gesture:1.3)"
+                )
+            elif selfie_style == "photo":
+                # 第三人称照片：自然动作，不需要手部强调
+                hand_prompt = f"({hand_action}:1.2)"
+            else:  # mirror
+                hand_prompt = f"({hand_action}:1.3)"
+            prompt_parts.append(hand_prompt)
+
+        # 日程活动的环境（如果有，补充到自拍场景之前）
+        if activity_scene and activity_scene.get("environment"):
+            prompt_parts.append(activity_scene["environment"])
+
+        prompt_parts.append(selfie_scene)
+        prompt_parts.append(description)
+
+        # 7. 合并并去重
         final_prompt = ", ".join(prompt_parts)
 
-        # 8. 👇 核心修改：智能清理冲突词汇 👇
-        # 仅在 standard 模式下清理，因为 mirror 模式需要手机倒影
-        if selfie_style == "standard":
-            phone_related_keywords = [
-                r"\bholding\s+(a\s+)?(smart)?phone\b",  # 匹配 "holding a phone" 或 "holding smartphone"
-                r"\bholding\s+(a\s+)?(smart)?phone\s+with\b",  # 匹配 "holding a phone with..."
-                r"\bwith\s+(a\s+)?(smart)?phone\b",  # 匹配 "with a phone"
-                r"\bphone\s+in\s+hand\b",  # 匹配 "phone in hand"
-                r"\bphone\s+screen\b",  # 匹配 "phone screen"
-                r"\bholding\s+(a\s+)?camera\b",  # 匹配 "holding a camera"
-            ]
-
-            # 执行清理
-            for pattern in phone_related_keywords:
-                final_prompt = re.sub(pattern, "", final_prompt, flags=re.IGNORECASE)
-
-            # 清理多余的逗号和空格 (防止出现 "holding a, , phone" 这种残留)
-            final_prompt = re.sub(r",\s*,+", ", ", final_prompt)
-            final_prompt = re.sub(r"^,\s*", "", final_prompt)
-            final_prompt = re.sub(r",\s*$", "", final_prompt)
-            final_prompt = final_prompt.strip()
-
-        # 9. 去重逻辑
-        keywords = [kw.strip() for kw in final_prompt.split(",")]
+        # 简单的去重处理（避免重复关键词）
+        keywords = [kw.strip() for kw in final_prompt.split(',')]
         seen = set()
         unique_keywords = []
         for kw in keywords:
@@ -854,122 +636,116 @@ class CustomPicAction(BaseAction):
 
         final_prompt = ", ".join(unique_keywords)
 
-        logger.info(f"{self.log_prefix} 自拍模式最终提示词: {final_prompt}")  # 现在会显示所有提示词，方便找到问题
-        return final_prompt
+        # 构建自拍负面提示词
+        # 读取配置中的基础负面提示词
+        base_negative_raw: object = self.get_config("selfie.negative_prompt", "")
+        base_negative = base_negative_raw.strip() if isinstance(base_negative_raw, str) else ""
 
-    def _load_hand_actions(self) -> List[str]:
-        """获取手部动作库
+        # 合并负面提示词：所有风格都加手部质量负面，standard/photo 各有额外约束
+        negative_parts = []
+        if base_negative:
+            negative_parts.append(base_negative)
+        negative_parts.append(SELFIE_HAND_NEGATIVE)
+        if selfie_style == "standard":
+            negative_parts.append(ANTI_DUAL_PHONE_PROMPT)
+        elif selfie_style == "photo":
+            negative_parts.append(ANTI_CAMERA_DEVICE_PROMPT)
+        selfie_negative_prompt = ", ".join(negative_parts)
 
-        返回用于自拍模式随机选择的手部动作描述列表。
-        每个动作是一个英文描述字符串，用于 Stable Diffusion 提示词。
+        logger.info(f"{self.log_prefix} 自拍模式最终提示词: {final_prompt[:200]}...")
+        logger.info(f"{self.log_prefix} 自拍模式负面提示词: {selfie_negative_prompt[:150]}...")
+        return final_prompt, selfie_negative_prompt
 
-        Returns:
-            List[str]: 手部动作描述列表
-        """
-        return [
-            # 基础手势
-            "peace sign, v sign",
-            "thumbs up, positive gesture",
-            "thumbs down, negative gesture",
-            "ok sign, hand gesture",
-            "rock on sign, heavy metal gesture",
-            "shaka sign, hang loose",
-            "call me hand gesture",
-            "pointing at camera lens, engaging",
-            "fist pump, excited",
-            "saluting with one hand",
-            "clenched fist, fighting spirit",
-            "crossing fingers, wishing luck",
-            "showing palm, stop gesture",
-            # 触碰脸部
-            "touching own cheek gently",
-            "leaning chin on hand, cute",
-            "hand near chin, thinking pose",
-            "covering mouth with hand, shy giggle",
-            "finger on lips, shushing",
-            "hand covering one eye, peeking",
-            # 整理头发
-            "playing with hair, messy look",
-            "tucking hair behind ear",
-            "fixing fringe, adjusting hair",
-            "hand on forehead, dramatic",
-            "scratching head, confused",
-            # 服饰相关
-            "pulling collar, flustered",
-            "touching neck, elegant",
-            "supporting jaw with hand",
-            "hand on hip, confident",
-            "hand akimbo, sassy",
-            "hand behind head, relaxed cool",
-            "hand resting on shoulder",
-            "adjusting sleeve, detail",
-            "fixing collar, neat",
-            "adjusting earring",
-            # 配饰相关
-            "wearing sunglasses on face",
-            "holding sunglasses, looking down",
-            "hand touching necklace",
-            "hand in pocket, casual",
-            # 依靠姿势
-            "resting arm on leg",
-            "hand on wall, leaning pose",
-            "hand on table, relaxing",
-            # 可爱手势
-            "finger heart, cute pose",
-            "blowing kiss, romantic",
-            "cat paw gesture, playful",
-            "bunny ears with fingers",
-            "holding invisible ball",
-            "winking with hand near face",
-            "pinky promise",
-            "making a heart shape with one arm",
-            "claw gesture, cute monster",
-            "framing face with hand",
-            # 持物动作 - 饮品
-            "holding coffee cup, steam rising",
-            "drinking from a straw",
-            "holding a milk tea bubble tea",
-            "holding a can of soda",
-            # 持物动作 - 食物
-            "holding a lollipop, colorful",
-            "eating ice cream, happy",
-            # 持物动作 - 花卉
-            "holding a flower, smelling it",
-            "holding a bouquet of flowers",
-            # 持物动作 - 物品
-            "holding a plush toy",
-            "holding a cute mascot doll",
-            "holding a pen, thinking",
-            "holding a book, reading",
-            "holding a fashion magazine",
-            "holding a microphone, singing",
-            "holding a game controller",
-            "holding a game console (Switch)",
-            "holding a musical instrument (ukulele)",
-            "holding a camera strap",
-            "holding a fan",
-            # 配饰展示
-            "wearing a watch on wrist",
-            "wearing a bracelet",
-            # 指向动作
-            "pointing at viewer, engaging",
-            "pointing up, eureka",
-            "pointing sideways, look here",
-            "beckoning with finger",
-            "thumbs pointing behind",
-            "waving hand, greeting",
-            # 相机互动
-            "hand reaching out to camera",
-            "hand touching the camera lens",
-            "hand resting on chin, close-up",
-            "hand covering part of face",
-            "hand forming a frame",
-            "peace sign under chin",
-            "showing fingernails, manicure",
-            "palm resting on cheek, cute",
-            "fist under chin",
-            "elbow on table, hand supporting head",
-        ]
+    # ---- 风格专用手部动作池 ----
+    # standard: 一只手举手机（画面外），只有另一只手空闲，仅单手动作
+    _STANDARD_HAND_ACTIONS = [
+        "peace sign, v sign",
+        "waving hand, friendly gesture",
+        "thumbs up, positive gesture",
+        "single hand heart gesture, cute gesture",
+        "touching cheek gently, soft expression",
+        "hand near chin, thinking pose",
+        "one hand playing with hair, casual",
+        "hand on hip, confident pose",
+        "adjusting hair, elegant gesture",
+        "resting chin on hand, relaxed",
+        "finger on lips, secretive",
+        "hand on chest, gentle",
+        "tucking hair behind ear, elegant",
+        "touching necklace, delicate gesture",
+        "hand near eye level, cute gesture",
+        "cat paw gesture, playful",
+        "saluting, playful military pose",
+        "hand covering mouth slightly, shy smile",
+        "blowing kiss, romantic",
+        "index finger pointing up, idea pose",
+        "hand cupping own cheek, adorable",
+        "hand resting on collarbone, graceful",
+        "pinching own cheek, playful",
+    ]
+
+    # mirror: 一只手拿手机对着镜子拍（画面内可见），另一只手空闲，全身或半身
+    _MIRROR_HAND_ACTIONS = [
+        "hand on hip, confident pose",
+        "hand in hair, adjusting hairstyle",
+        "hand on waist, model pose",
+        "fixing collar, neat appearance",
+        "adjusting earring, elegant detail",
+        "hand touching shoulder, graceful",
+        "hand behind head, relaxed pose",
+        "one hand on thigh, standing pose",
+        "hand resting at side, natural",
+        "hand lightly touching mirror, playful",
+        "fixing skirt, adjusting outfit",
+        "hand on bag strap, casual",
+        "brushing bangs aside, stylish",
+        "hand in pocket, cool pose",
+        "hand on chin, thoughtful pose",
+        "adjusting glasses, intellectual",
+        "checking watch, elegant gesture",
+        "holding strand of hair, delicate",
+        "hand near face, model pose",
+        "touching hat brim, fashionable",
+    ]
+
+    # photo: 他人拍摄视角，双手都自由，可以有更自然丰富的全身姿态
+    _PHOTO_HAND_ACTIONS = [
+        "hands behind back, standing gracefully",
+        "hands in pockets, casual walk",
+        "one hand in hair wind blowing, dynamic",
+        "arms at sides, natural standing",
+        "holding coffee cup, cafe scene",
+        "hands clasped in front, gentle pose",
+        "holding bag, walking pose",
+        "leaning on railing, one hand resting",
+        "sitting with hands on lap, relaxed",
+        "hand on hat, windy day",
+        "twirling, arms slightly out, dynamic spin",
+        "arms stretched out, embracing scenery",
+        "holding flower, smelling gently",
+        "hand shielding eyes from sun, looking afar",
+        "carrying shopping bags, casual walk",
+        "holding book to chest, scholarly",
+        "one hand waving at camera, candid",
+        "both hands holding drink, warm gesture",
+        "hands on knees, sitting pose",
+        "leaning against wall, arms relaxed",
+        "crouching down, hands on knees, playful angle",
+        "running toward camera, joyful",
+        "holding umbrella, rainy atmosphere",
+        "hand reaching out toward camera, inviting",
+        "sitting on bench, legs crossed, elegant",
+    ]
+
+    @staticmethod
+    def _get_hand_actions_for_style(selfie_style: str) -> list[str]:
+        """根据自拍风格返回对应的手部动作池"""
+        if selfie_style == "mirror":
+            return SelfiePainterAction._MIRROR_HAND_ACTIONS
+        elif selfie_style == "photo":
+            return SelfiePainterAction._PHOTO_HAND_ACTIONS
+        else:
+            return SelfiePainterAction._STANDARD_HAND_ACTIONS
 
     def _get_selfie_reference_image(self) -> Optional[str]:
         """获取自拍参考图片的base64编码
@@ -977,7 +753,8 @@ class CustomPicAction(BaseAction):
         Returns:
             图片的base64编码，如果不存在则返回None
         """
-        image_path = str(self.get_config("selfie.reference_image_path", "")).strip()
+        image_path_raw: object = self.get_config("selfie.reference_image_path", "")
+        image_path = image_path_raw.strip() if isinstance(image_path_raw, str) else ""
         if not image_path:
             return None
 
@@ -988,9 +765,9 @@ class CustomPicAction(BaseAction):
                 image_path = os.path.join(plugin_dir, image_path)
 
             if os.path.exists(image_path):
-                with open(image_path, "rb") as f:
+                with open(image_path, 'rb') as f:
                     image_data = f.read()
-                image_base64 = base64.b64encode(image_data).decode("utf-8")
+                image_base64 = base64.b64encode(image_data).decode('utf-8')
                 logger.info(f"{self.log_prefix} 从文件加载自拍参考图片: {image_path}")
                 return image_base64
             else:
@@ -1000,124 +777,122 @@ class CustomPicAction(BaseAction):
             logger.error(f"{self.log_prefix} 加载自拍参考图片失败: {e}")
             return None
 
-    async def _schedule_auto_recall_for_recent_message(self, model_config: Optional[Dict[str, Any]] = None):
-        """安排最近发送消息的自动撤回
-
-        通过查询数据库获取最近发送的消息ID，然后安排撤回任务
-
-        Args:
-            model_config: 当前使用的模型配置，用于检查撤回延时设置
-        """
-        # 检查全局开关
-        global_enabled = bool(self.get_config("auto_recall.enabled", False))
-        if not global_enabled:
-            return
-
-        # 检查模型的撤回延时，大于0才启用
-        if not model_config:
+    async def _schedule_auto_recall_for_recent_message(
+        self,
+        model_config: Optional[Dict[str, Any]] = None,
+        model_id: Optional[str] = None,
+        send_timestamp: float = 0.0,
+    ):
+        """安排最近发送消息的自动撤回"""
+        global_enabled: bool = bool(self.get_config("auto_recall.enabled", False))
+        if not global_enabled or not model_config:
             return
 
         delay_seconds = model_config.get("auto_recall_delay", 0)
         if delay_seconds <= 0:
             return
 
-        # 获取模型ID用于检查运行时撤回状态
-        model_id = None
-        models_config = self.get_config("models", {})
-        if isinstance(models_config, dict):
-            for mid, config in models_config.items():
-                # 通过模型名称匹配，避免字典比较问题
-                if isinstance(config, dict) and config.get("model") == model_config.get("model"):
-                    model_id = mid
-                    break
-
-        # 检查运行时撤回状态
         if model_id and not runtime_state.is_recall_enabled(self.chat_id, model_id, global_enabled):
             logger.info(f"{self.log_prefix} 模型 {model_id} 撤回已在当前聊天流禁用")
             return
 
-        # 创建异步任务
-        async def recall_task():
-            try:
-                # 等待足够时间让消息存储和 echo 回调完成（平台返回真实消息ID需要时间）
-                await asyncio.sleep(4)
+        await schedule_auto_recall(self.chat_id, delay_seconds, self.log_prefix, self.send_command, send_timestamp)
 
-                # 查询最近发送的消息获取消息ID
-                import time as time_module
-                from src.plugin_system.apis import message_api
-                from src.config.config import global_config
+    async def _generate_image_only(
+        self,
+        description: str,
+        model_id: Optional[str] = None,
+        size: str = "",
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None,
+        extra_negative_prompt: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """仅生成图片，不发送消息、不撤回、不缓存
 
-                current_time = time_module.time()
-                # 查询最近10秒内本聊天中Bot发送的消息
-                messages = message_api.get_messages_by_time_in_chat(
-                    chat_id=self.chat_id,
-                    start_time=current_time - 10,
-                    end_time=current_time + 1,
-                    limit=5,
-                    limit_mode="latest",
-                )
+        与 _execute_unified_generation() 共享核心逻辑，但适用于自动自拍等
+        需要拿到图片数据而不直接发送的场景。
 
-                # 找到Bot发送的图片消息
-                bot_id = str(global_config.bot.qq_account)
-                target_message_id = None
+        Args:
+            description: 图片描述/提示词
+            model_id: 模型ID，默认使用 generation.default_model
+            size: 图片尺寸，留空使用模型默认值
+            strength: 图生图强度
+            input_image_base64: 输入图片的 base64（图生图用）
+            extra_negative_prompt: 额外负面提示词
 
-                for msg in messages:
-                    if str(msg.user_info.user_id) == bot_id:
-                        # 找到Bot发送的最新消息
-                        mid = str(msg.message_id)
-                        # 只使用纯数字的消息ID（QQ平台真实ID），跳过 send_api_xxx 格式的内部ID
-                        if mid.isdigit():
-                            target_message_id = mid
-                            break
-                        else:
-                            logger.debug(f"{self.log_prefix} 跳过非平台消息ID: {mid}")
+        Returns:
+            (success, image_data): success 为 True 时 image_data 是 base64 或 URL 字符串
+        """
+        if not model_id:
+            model_id_raw: object = self.get_config("generation.default_model", "model1")
+            model_id = model_id_raw if isinstance(model_id_raw, str) and model_id_raw else "model1"
 
-                if not target_message_id:
-                    logger.warning(f"{self.log_prefix} 未找到有效的平台消息ID（需要纯数字格式）")
-                    return
+        # 获取模型配置
+        model_config = self._get_model_config(model_id)
+        if not model_config:
+            logger.error(f"{self.log_prefix} [image_only] 模型配置获取失败: {model_id}")
+            return False, f"模型 '{model_id}' 不存在或配置无效"
 
-                logger.info(f"{self.log_prefix} 安排消息自动撤回，延时: {delay_seconds}秒，消息ID: {target_message_id}")
+        # 配置验证
+        http_base_url = model_config.get("base_url")
+        http_api_key = model_config.get("api_key")
+        api_format = model_config.get("format", "openai")
+        
+        # 检查base_url
+        if not http_base_url:
+            return False, "HTTP配置不完整"
+        
+        # 检查api_key（comfyui格式允许为空）
+        if api_format != "comfyui" and not http_api_key:
+            return False, "HTTP配置不完整"
+        
+        # API密钥验证（仅对需要api_key的格式）
+        if api_format != "comfyui" and isinstance(http_api_key, str) and (
+            "YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key
+        ):
+            return False, "API密钥未配置"
 
-                # 等待指定时间后撤回
-                await asyncio.sleep(delay_seconds)
+        # 合并额外负面提示词
+        if extra_negative_prompt:
+            model_config = merge_negative_prompt(model_config, extra_negative_prompt)
 
-                # 尝试多个撤回命令名（参考 recall_manager_plugin）
-                DELETE_COMMAND_CANDIDATES = ["DELETE_MSG", "delete_msg", "RECALL_MSG", "recall_msg"]
-                recall_success = False
+        # 处理尺寸
+        image_size, llm_original_size = get_image_size(model_config, size, self.log_prefix)
+        if not self._validate_image_size(image_size):
+            image_size = model_config.get("default_size", "1024x1024")
 
-                for cmd in DELETE_COMMAND_CANDIDATES:
-                    try:
-                        result = await self.send_command(
-                            command_name=cmd, args={"message_id": str(target_message_id)}, storage_message=False
-                        )
+        # Gemini/Zai 尺寸处理
+        model_config = inject_llm_original_size(model_config, llm_original_size or "")
 
-                        # 检查返回结果
-                        if isinstance(result, bool) and result:
-                            recall_success = True
-                            logger.info(f"{self.log_prefix} 消息自动撤回成功，命令: {cmd}，消息ID: {target_message_id}")
-                            break
-                        elif isinstance(result, dict):
-                            status = str(result.get("status", "")).lower()
-                            if status in ("ok", "success") or result.get("retcode") == 0 or result.get("code") == 0:
-                                recall_success = True
-                                logger.info(
-                                    f"{self.log_prefix} 消息自动撤回成功，命令: {cmd}，消息ID: {target_message_id}"
-                                )
-                                break
-                    except Exception as e:
-                        logger.debug(f"{self.log_prefix} 撤回命令 {cmd} 失败: {e}")
-                        continue
+        max_retries = self.get_config("components.max_retries", 2)
 
-                if not recall_success:
-                    logger.warning(f"{self.log_prefix} 消息自动撤回失败，消息ID: {target_message_id}，已尝试所有命令")
+        try:
+            api_client = self._get_api_client(api_format)
+            success, result = await api_client.generate_image(
+                prompt=description,
+                model_config=model_config,
+                size=image_size,
+                strength=strength,
+                input_image_base64=input_image_base64,
+                max_retries=max_retries,
+            )
+        except Exception as e:
+            logger.error(f"{self.log_prefix} [image_only] 生图异常: {e!r}")
+            return False, f"生图异常: {str(e)[:100]}"
 
-            except asyncio.CancelledError:
-                logger.debug(f"{self.log_prefix} 自动撤回任务被取消")
-            except Exception as e:
-                logger.error(f"{self.log_prefix} 自动撤回失败: {e}")
+        if not success:
+            return False, result
 
-        # 启动后台任务
-        asyncio.create_task(recall_task())
+        # 处理返回数据
+        final_image_data = self.image_processor.process_api_response(result)
+        if not final_image_data:
+            return False, "API返回数据格式错误"
+
+        # 如果是 URL，下载并转为 base64
+        return await resolve_image_data(
+            final_image_data, self._download_and_encode_base64,
+            f"{self.log_prefix} [image_only]"
+        )
 
     def _extract_description_from_message(self) -> str:
         """从用户消息中提取图片描述
@@ -1127,125 +902,66 @@ class CustomPicAction(BaseAction):
         """
         if not self.action_message:
             return ""
-
+            
         # 获取消息文本
-        # 使用 getattr 安全获取 raw_message
-        raw_msg = getattr(self.action_message, "raw_message", "")
         message_text = (
-            self.action_message.processed_plain_text or self.action_message.display_message or raw_msg or ""
+            self.action_message.processed_plain_text
+            or self.action_message.display_message
+            or getattr(self.action_message, "raw_message", "")
+            or ""
         ).strip()
-
+        
         if not message_text:
             return ""
-
+            
         import re
-
+        
         # 移除常见的画图相关前缀
         patterns_to_remove = [
-            r"^画",  # "画"
-            r"^绘制",  # "绘制"
-            r"^生成图片",  # "生成图片"
-            r"^画图",  # "画图"
-            r"^帮我画",  # "帮我画"
-            r"^请画",  # "请画"
-            r"^能不能画",  # "能不能画"
-            r"^可以画",  # "可以画"
-            r"^画一个",  # "画一个"
-            r"^画一只",  # "画一只"
-            r"^画张",  # "画张"
-            r"^画幅",  # "画幅"
-            r"^图[：:]",  # "图："或"图:"
-            r"^生成图片[：:]",  # "生成图片："或"生成图片:"
-            r"^[：:]",  # 单独的冒号
+            r'^画',           # "画"
+            r'^绘制',         # "绘制"
+            r'^生成图片',     # "生成图片"
+            r'^画图',         # "画图"
+            r'^帮我画',       # "帮我画"
+            r'^请画',         # "请画"
+            r'^能不能画',     # "能不能画"
+            r'^可以画',       # "可以画"
+            r'^画一个',       # "画一个"
+            r'^画一只',       # "画一只"
+            r'^画张',         # "画张"
+            r'^画幅',         # "画幅"
+            r'^图[：:]',      # "图："或"图:"
+            r'^生成图片[：:]', # "生成图片："或"生成图片:"
+            r'^[：:]',        # 单独的冒号
+            r'^用\s*模型\s*\S+\s*',       # "用模型3" / "用 模型 abc"
+            r'^用\s*model\s*\S+\s*',      # "用model2" / "用 model abc"
         ]
-
+        
         cleaned_text = message_text
         for pattern in patterns_to_remove:
-            cleaned_text = re.sub(pattern, "", cleaned_text, flags=re.IGNORECASE)
-
+            cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
+        
         # 移除常见的后缀
         suffix_patterns = [
-            r"图片$",  # "图片"
-            r"图$",  # "图"
-            r"一下$",  # "一下"
-            r"呗$",  # "呗"
-            r"吧$",  # "吧"
+            r'图片$',         # "图片"
+            r'图$',           # "图"
+            r'一下$',         # "一下"
+            r'呗$',           # "呗"
+            r'吧$',           # "吧"
         ]
-
+        
         for pattern in suffix_patterns:
-            cleaned_text = re.sub(pattern, "", cleaned_text, flags=re.IGNORECASE)
-
+            cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
+        
         # 清理空白字符
         cleaned_text = cleaned_text.strip()
-
+        
         # 如果清理后为空，返回原消息（可能是简单的描述）
         if not cleaned_text:
             cleaned_text = message_text
-
+            
         # 限制长度，避免过长的描述
         if len(cleaned_text) > 100:
             cleaned_text = cleaned_text[:100]
-
+            
         return cleaned_text
-
-    async def _get_current_schedule_entry(self) -> Optional["ScheduleEntry"]:
-        """获取当前时间对应的日程条目
-
-        尝试加载或生成当天日程，并返回当前时间匹配的条目。
-        如果日程系统未启用或无法获取，返回 None。
-
-        Returns:
-            Optional[ScheduleEntry]: 当前时间对应的日程条目，或 None
-        """
-        try:
-            # 导入日程相关模块
-            from .schedule_generator import ScheduleGenerator
-
-            # 检查是否配置了 smart 模式（只有 smart 模式才有日程）
-            schedule_mode = self.get_config("auto_selfie.schedule_mode", "smart")
-            if schedule_mode not in ("smart", "times", "hybrid"):
-                logger.debug(f"{self.log_prefix} 当前调度模式不支持日程: {schedule_mode}")
-                return None
-
-            # 创建日程生成器
-            schedule_generator = ScheduleGenerator(self)
-
-            # 获取配置（显式类型转换以满足类型检查）
-            today = datetime.now().strftime("%Y-%m-%d")
-
-            schedule_times_config = self.get_config(
-                "auto_selfie.schedule_times",
-                ["07:30", "09:00", "10:30", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"],
-            )
-            schedule_times: list[str] = (
-                list(schedule_times_config) if isinstance(schedule_times_config, list) else ["08:00", "12:00", "20:00"]
-            )
-
-            weather: str = str(self.get_config("auto_selfie.weather", "晴天") or "晴天")
-            is_holiday_config = self.get_config("auto_selfie.is_holiday", False)
-            is_holiday: bool = bool(is_holiday_config) if is_holiday_config is not None else False
-
-            # 获取或生成日程
-            schedule = await schedule_generator.get_or_generate_schedule(
-                date=today,
-                schedule_times=schedule_times,
-                weather=weather,
-                is_holiday=is_holiday,
-            )
-
-            if not schedule:
-                logger.warning(f"{self.log_prefix} 无法获取日程")
-                return None
-
-            # 获取当前时间对应的条目
-            current_time = datetime.now()
-            current_entry = schedule.get_current_entry(current_time)
-
-            return current_entry
-
-        except ImportError as e:
-            logger.warning(f"{self.log_prefix} 日程模块导入失败: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"{self.log_prefix} 获取日程条目失败: {e}", exc_info=True)
-            return None

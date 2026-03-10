@@ -1,15 +1,13 @@
 """Zai API 客户端（OpenAI 兼容，走 chat/completions）
 支持文生图 / 图生图，透传 Image Aspect Ratio、Image Resolution、seed。
 """
-
 import json
 import re
 import urllib.request
-import traceback
 from typing import Dict, Any, Tuple, Optional
 
 from .base_client import BaseApiClient, logger
-from ..size_utils import pixel_size_to_gemini_aspect
+from ..utils import pixel_size_to_gemini_aspect
 
 
 class ZaiClient(BaseApiClient):
@@ -23,10 +21,10 @@ class ZaiClient(BaseApiClient):
         model_config: Dict[str, Any],
         size: str,
         strength: Optional[float] = None,
-        input_image_base64: Optional[str] = None,
+        input_image_base64: Optional[str] = None
     ) -> Tuple[bool, str]:
         """发送 Zai chat/completions 请求"""
-        base_url = model_config.get("base_url", "https://zai.is/api").rstrip("/")
+        base_url = model_config.get("base_url", "https://zai.is/api").rstrip('/')
         api_key = model_config.get("api_key", "")
         model = model_config.get("model", "")
 
@@ -40,9 +38,15 @@ class ZaiClient(BaseApiClient):
         contents = [{"type": "text", "text": full_prompt}]
         if input_image_base64:
             image_data_uri = self._prepare_image_data_uri(input_image_base64)
-            contents.append({"type": "image_url", "image_url": {"url": image_data_uri}})
+            contents.append({
+                "type": "image_url",
+                "image_url": {"url": image_data_uri}
+            })
 
-        messages = [{"role": "user", "content": contents}]
+        messages = [{
+            "role": "user",
+            "content": contents
+        }]
 
         payload = {
             "model": model,
@@ -67,24 +71,30 @@ class ZaiClient(BaseApiClient):
         proxy_config = self._get_proxy_config()
 
         data = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": f"{api_key}"}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"{api_key}"
+        }
 
         logger.info(f"{self.log_prefix} (Zai) 发起请求: {model}, Prompt: {full_prompt[:50]}... To: {endpoint}")
 
         req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
 
         try:
+            # 构建 opener（局部使用，不污染全局）
             if proxy_config:
-                proxy_handler = urllib.request.ProxyHandler(
-                    {"http": proxy_config["http"], "https": proxy_config["https"]}
-                )
+                proxy_handler = urllib.request.ProxyHandler({
+                    'http': proxy_config['http'],
+                    'https': proxy_config['https']
+                })
                 opener = urllib.request.build_opener(proxy_handler)
-                urllib.request.install_opener(opener)
-                timeout = proxy_config.get("timeout", 600)
+                timeout = proxy_config.get('timeout', 600)
             else:
+                opener = urllib.request.build_opener()
                 timeout = 600
 
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with opener.open(req, timeout=timeout) as response:
                 response_status = response.status
                 body_bytes = response.read()
                 body_str = body_bytes.decode("utf-8")
@@ -121,14 +131,11 @@ class ZaiClient(BaseApiClient):
                     logger.error(f"{self.log_prefix} (Zai) 响应中未找到图像数据")
                     return False, "未找到图像数据"
                 else:
-                    logger.error(
-                        f"{self.log_prefix} (Zai) API 请求失败. 状态 {response_status}. 正文: {body_str[:300]}..."
-                    )
+                    logger.error(f"{self.log_prefix} (Zai) API 请求失败. 状态 {response_status}. 正文: {body_str[:300]}...")
                     return False, f"API 请求失败(状态码 {response_status})"
 
         except Exception as e:
             logger.error(f"{self.log_prefix} (Zai) 请求异常: {e!r}", exc_info=True)
-            traceback.print_exc()
             return False, f"HTTP 请求异常: {str(e)[:100]}"
 
     def _build_image_config(self, model_config: Dict[str, Any]) -> Dict[str, Optional[str]]:
@@ -189,6 +196,7 @@ class ZaiClient(BaseApiClient):
             return self._extract_from_text(content)
         return None
 
+
     def _extract_from_text(self, text: str) -> Optional[str]:
         """尝试从文本中提取 base64 或 URL"""
         if not text:
@@ -200,7 +208,7 @@ class ZaiClient(BaseApiClient):
 
         url_match = re.search(r"https?://\S+", stripped)
         if url_match:
-            return url_match.group(0).rstrip("\",'")
+            return url_match.group(0).rstrip('",\'')
 
         return None
 

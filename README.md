@@ -5,656 +5,602 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.5.3-blue" alt="Version">
-  <img src="https://img.shields.io/badge/MaiBot-0.10.x-green" alt="MaiBot">
+  <img src="https://img.shields.io/badge/版本-v3.6.0--dev-blue" alt="Version">
+  <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
 
 ---
 
-> ⚠️ **修改版说明**
->
-> 本仓库为原版 custom_pic_plugin 插件的**修改版**，由 nguspring 维护。
->
-> | 项目 | 信息 |
-> |------|------|
-> | 原版仓库 | https://github.com/1021143806/custom_pic_plugin |
-> | 修改版仓库 | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.5.3 |
-> | 更新日志 | [新功能添加说明.md](新功能添加说明.md) |
->
-> **修改版定位**：本修改版专注于**定时发送自拍**功能，让 Bot 更像真人；同时主要对**魔搭模型**进行优化，内置 7 个精选魔搭模型预设配置，提供开箱即用的体验。
-
-## 💡 插件定位
-
-**画家麦麦的自拍日常** = 🎨 **画图功能** + 📸 **自拍功能**
-
-| 功能 | 描述 |
-|------|------|
-| 🎨 **画图** | 支持文生图/图生图智能识别，兼容 OpenAI、豆包、Gemini、魔搭等多种 API，命令式风格转换，内置 7 个魔搭模型预设 |
-| 📸 **自拍** | 智能日程规划，动态场景描述，自动配文生成，支持自定义人设注入让配文更符合角色设定 |
-
-**v3.5.3 核心修复**：修复 WebUI 配置显示不同步（重启后显示旧值但 config 已写入）问题；修复模型 API Key 默认值风险（默认留空，不再写入 Bearer 示例值）。
-
-魔搭 api 的优点是调用免费，AI 绘图本身配置需求并不是很高，但是平台收费又都比较贵，魔搭社区有按天计算的免费调用限额，对应麦麦的绘图需求来说完全足够。如果想接其他风格绘图的可以使用豆包和 GPT 模型。
-
-## ✨ 主要特性（本插件为 MaiBot 生态下的图片生成扩展）
-
-### 🎯 智能图片生成
-   - **自动模式识别**：智能判断文生图或图生图模式
-   - **LLM智能判定**：在Focus模式下使用LLM精确理解用户需求
-   - **关键词触发**：在Normal模式下通过关键词快速响应
-   - **自拍模式**：支持生成Bot角色的自拍照片，包含40+种智能手部动作库
-
-### 🛠️ 多API格式支持
-   - **OpenAI格式**：兼容OpenAI、硅基流动、Grok、NewAPI等
-   - **豆包格式**：火山引擎豆包专用格式
-   - **Gemini格式**：Google Gemini专用格式，支持宽高比和分辨率配置
-   - **魔搭格式**：魔搭社区专用格式
-   - **砂糖云格式**：NovelAI代理，支持artist标签
-   - **梦羽AI格式**：支持多种模型索引
-   - **Zai格式**：Gemini API转发服务
-
-### 🎨 命令式功能
-   - **风格转换**：`/dr <风格>` - 快速应用预设风格（仅图生图）
-   - **自然语言**：`/dr 画一只猫` - 智能判断文/图生图
-   - **模型指定**：`/dr 用model1画猫` - 自然语言中动态指定模型
-   - **模型管理**：`/dr list`、`/dr set <模型ID>` - 动态切换模型
-   - **风格管理**：`/dr styles`、`/dr style <风格名>` - 查看风格详情
-
-### ⚙️ 高级功能
-   - **⏰ 定时自拍**：Bot 会定时自动发送自拍，支持"麦麦睡觉"模式（睡眠时间段不发送）
-   - **🔍 智能参考搜索**：内置Bing图片搜索，自动联网搜索陌生角色图片并提取特征（v3.4.0 新增）
-   - **🧠 提示词优化器**：自动将中文描述优化为专业英文提示词
-   - **🤖 动态配置**：运行时切换模型，无需重启；支持每个聊天流独立配置开关
-   - **🔄 自动撤回**：支持按模型配置图片自动撤回延时
-   - **🎭 风格别名**：支持中文别名，如"卡通"对应"cartoon"
-   - **💾 结果缓存**：相同参数自动复用结果，节省资源
-
-## 🚀 快速开始
-
-### 1. 安装插件
-  - 进入 `MaiBot/plugins` 目录
-  - 克隆仓库：`git clone https://github.com/nguspring/selfie_painter`
-  - 重启 MaiBot，插件会自动生成 `config.toml`
-
-### 2. 配置模型
-  - 编辑 `config.toml`，在 `[models]` 节下配置你的生图模型。
-  - **推荐使用魔搭社区模型**（免费且质量高）：
-    - 插件目录下的 `model_presets.toml` 文件中内置了 7 个精选的魔搭模型配置。
-    - 直接将需要的配置块复制到 `config.toml` 中即可使用。
-    - 推荐使用 `Tongyi-MAI/Z-Image-Turbo` 作为默认模型。
-
-### 3. 安装依赖
-  - v3.4.0 新增了 `aiohttp` 和 `beautifulsoup4` 依赖，插件系统会自动检测依赖（需手动安装），如遇报错请执行：
-    ```bash
-    pip install aiohttp beautifulsoup4
-    ```
-
-## 📋 使用指南
-
-### 基础功能
-- **文生图**：直接对麦麦说 "画一只猫"、"生成一张风景图"
-- **图生图**：发送图片给麦麦，并说 "把这张图变成二次元风格"
-- **自拍**：对麦麦说 "来张自拍"、"照个镜子"
-
-### Command组件 - 命令式操作
-1. **风格化图生图** (`/dr <风格>`)
-   - 直接使用预配置的英文提示词
-   - 支持风格别名（中文）
-   - 需要先发送图片
-
-2. **模型配置管理**
-   - `/dr list` - 查看所有可用模型
-   - `/dr set <模型ID>` - 动态切换图生图命令使用的模型
-   - `/dr config` - 查看当前配置
-   - `/dr reset` - 重置为默认配置
-
-3. **管理员命令**（需在admin_users中配置）
-   - `/dr on` / `/dr off` - 启用/禁用当前聊天的插件
-   - `/dr model on|off <模型ID>` - 启用/禁用指定模型
-   - `/dr recall on|off <模型ID>` - 启用/禁用指定模型的自动撤回
-   - `/dr default <模型ID>` - 设置Action组件默认模型
-
-4. **风格管理**
-   - `/dr styles` - 列出所有可用风格
-   - `/dr style <风格名>` - 查看风格详情
-   - `/dr help` - 显示帮助信息
-
-5. **定时自拍管理** (v3.4.1 增强)
-   - `/dr auto_selfie` - 查看当前状态
-   - `/dr auto_selfie on|off` - 开启/关闭定时自拍
-   - `/dr auto_selfie mode white|black` - 切换白名单/黑名单模式
-   - `/dr auto_selfie add` - 将当前聊天加入列表
-   - `/dr auto_selfie remove` - 将当前聊天移出列表
-   - `/dr auto_selfie list` - 查看列表详情
-
-### 进阶配置
-- **自定义场景**：在 `[selfie]` 节中修改 `scene_standard` 和 `scene_mirror`，为你的 Bot 打造独一无二的自拍背景（如"在森林里"、"在咖啡厅"）。
-- **双自拍模式**：在 `[selfie]` 节中可分别配置 `negative_prompt_standard`（标准自拍负面词）和 `negative_prompt_mirror`（对镜自拍负面词），避免标准自拍出现手机。
-- **自动撤回**：在 `[models.xxx]` 中设置 `auto_recall_delay`（秒），可实现图片发送后自动撤回（阅后即焚）。
-
-## 🔧 依赖说明
-
-- 需 Python 3.12+
-- 依赖 MaiBot 插件系统（0.8.0 新插件系统，测试兼容 0.10.0 - 0.10.2）
-- 火山方舟 api 需要通过 pip install 'volcengine-python-sdk[ark]' 安装方舟SDK
-
-## ⏰ 定时自拍功能（v3.5.0 智能日程模式）
-
-**功能描述**：让麦麦像真人一样每天发送自拍，配文自然有连贯感。
-
-**灵感来源**：本功能的灵感来源于 A-Dawn 的 [A_MIND 插件](https://github.com/A-Dawn/A_MIND) 和 XXXxx7258 的 [Mai_Only_You 插件](https://github.com/XXXxx7258/Mai_Only_You)，感谢两位开发者的创意启发。
-
-**v3.5.0 核心特性**：
-- 🌟 **智能日程模式 (Smart Mode)**：通过 LLM 动态生成每日日程，每个时间点包含完整场景描述，实现最自然的"真人感"自拍体验
-- 🎭 **日程自动更新**：每天首次触发时自动生成当天日程，保持新鲜感
-- 🎨 **场景驱动动作**：人物动作由场景决定，不再使用随机的 hand_actions，配文与场景紧密关联
-- 📝 **配文多样化**：支持5种配文类型（叙事式、询问式、分享式、独白式、无配文），智能选择
-- 🚀 **性能优化**：定时自拍采用"生成一次，发送多次"模式，多群发送时只调用一次 API
-
-### 调度模式
-
-#### 智能日程模式 (Smart Mode) - 推荐 ⭐
-
-这是 v3.5.0 的核心功能，通过 LLM 动态生成每日日程，实现最自然的"真人感"自拍体验。
-
-**配置示例：**
-```toml
-[auto_selfie]
-schedule_times = ["08:00", "12:00", "18:00", "21:00"]
-```
-
-**特点：**
-- 🤖 LLM 根据时间点、天气等动态生成当天日程
-- 🎬 每个时间点包含完整场景描述：地点、姿势、表情、服装、动作
-- 🎭 人物动作由场景决定，不使用随机的 hand_actions
-- 🔄 日程每天自动更新，保持新鲜感
-- 💬 配文与场景紧密关联，更加自然
-
-**工作流程：**
-1. 每天首次触发时，LLM 生成当天完整日程
-2. 到达时间点时，根据日程条目生成图片和配文
-3. 标记已完成的条目，避免重复发送
-
-**使用示例：**
-
-假设配置了 `schedule_times = ["08:00", "12:00", "18:00", "21:00"]`，Smart 模式会在每天首次触发时生成类似这样的日程：
-
-| 时间 | 场景描述 |
-|------|----------|
-| 08:00 | 在卧室刚起床，穿着睡衣，揉着眼睛，阳光透过窗帘洒进来 |
-| 12:00 | 在公司附近的便利店买午餐，穿着职业装，手里拿着便当 |
-| 18:00 | 下班后在商场逛街，试穿新衣服，对着镜子自拍 |
-| 21:00 | 在家里沙发上追剧，穿着居家服，旁边放着零食 |
-
-每个场景会根据角色人设和天气自动调整，第二天会生成全新的日程。
+> 🚀 **从 v3.5.x 升级到 v3.6.0？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v360)。
 
 ---
 
-### 配置项详解
+> **📌 关于本仓库**
+>
+> 本仓库是 nguspring 维护的**改版**画图插件，发展脉络如下：
+>
+> 1. 最初基于原版 [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) 修改，发布为 `selfie_painter`（v3.4.x ~ v3.5.x）
+> 2. 原作者后来将 custom_pic_plugin 升级重构为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)（v3.4.0）
+> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.0）
+>
+> | 项目 | 链接 |
+> |------|------|
+> | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
+> | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
+> | 当前版本 | v3.6.0-dev |
+>
+> **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
 
-#### 智能日程模式配置 (`[auto_selfie]` 节) - v3.5.0-beta.3
+---
 
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `schedule_generator_model` | string | "" | 日程生成使用的LLM模型ID，留空则使用MaiBot的replyer模型 |
-| `schedule_min_entries` | int | 4 | 每天最少生成多少条日程 |
-| `schedule_max_entries` | int | 8 | 每天最多生成多少条日程 |
-| `enable_interval_supplement` | bool | true | 是否启用间隔补充发送（日程时间点之外的随机发送） |
-| `interval_minutes` | int | 120 | 间隔补充的最小间隔时间（分钟），仅在日程时间点附近(±30分钟)之外生效 |
-| `interval_probability` | float | 0.3 | 间隔补充的触发概率（0.0-1.0），每次达到间隔时间时有此概率实际触发 |
+## 🔄 从 v3.5.x 升级到 v3.6.0
 
-#### 日常叙事线配置 (`[auto_selfie]` 节)：
-- `enable_narrative`: 是否启用叙事系统（默认true）
+v3.6.0 对代码结构、插件名称和配置格式做了**大幅重构**，与 v3.5.x **不兼容**。
 
-#### 配文类型配置：
-- `caption_types`: 启用的配文类型列表
-- `caption_weights`: 配文类型权重
-- `caption_model_id`: 配文生成使用的LLM模型
+**请删除旧版插件目录后重新安装：**
 
-#### 基础配置项 (`[auto_selfie]` 节)：
-- `enabled`: 总开关，默认为 false（需手动开启）
-- `schedule_times`: 指定时间点列表，LLM 会自动生成对应场景。如 `["08:00", "12:00", "20:00"]`
-- `selfie_style`: 自拍风格，支持 `standard`（标准）和 `mirror`（对镜）
-- `use_replyer_for_ask`: 是否使用麦麦的回复模型生成自然的询问语（推荐开启）
-- `sleep_mode_enabled`: 是否开启睡眠模式（默认 true）
-- `sleep_start_time`: 睡眠开始时间（如 "23:00"）
-- `sleep_end_time`: 睡眠结束时间（如 "07:00"）
-- `list_mode`: 名单模式。`whitelist`=白名单（仅允许列表），`blacklist`=黑名单（排除列表）
-- `chat_id_list`: 聊天ID列表。**注意**：在 `config.toml` 文件中直接修改时，ID需要加双引号（如 `"qq:123456:group"`）；通过 WebUI 修改时无需手动加引号，WebUI 会自动处理格式
+```shell
+cd MaiBot/plugins
+# 1. 删除旧版目录（如有需要请先手动备份 config.toml）
+rm -rf selfie_painter
+# 2. 重新安装
+git clone https://github.com/nguspring/selfie_painter.git -b dev
+```
 
-**自拍场景配置** (`[selfie]` 节)：
-- `scene_standard`: 标准自拍（前置摄像头）的场景描述
-- `scene_mirror`: 对镜自拍的场景描述
-- `prompt_prefix`: 自拍专用前缀（如发色、瞳色等外貌特征）
-- `negative_prompt_standard`: 标准自拍负面词（禁止手机出现）
-- `negative_prompt_mirror`: 对镜自拍负面词（允许手机出现）
+重启 MaiBot 后会自动生成默认 `config.toml`，按 [新手快速配置指南](#-新手快速配置指南) 配置即可。
 
-**注意**：麦麦只会在"活跃"的聊天流中发送自拍。
+> ⚠️ 旧版 `config.toml` 的配置项名称和结构已大幅变动，无法直接复用。建议参考旧配置手动填写新配置中对应的 API 密钥和模型信息。
+---
 
-### 新增文件说明（v3.5.0）
+## ⚠️ 已知问题
 
-Smart 模式引入了以下新的核心模块：
+| 问题 | 状态 | 说明 |
+|------|------|------|
+| grok2api 通过 `openai-chat` 接口生图不稳定 | 🔧 修复中 | 部分 grok2api 实例可以正常生图，部分不行。正在尽力排查兼容性问题 |
 
-| 文件 | 说明 |
+---
+
+## 💡 插件定位
+
+**画家麦麦的自拍日常** = 🎨 **画图功能** + 📸 **自拍功能** + 📅 **日程系统** + 👗 **衣柜系统**
+
+| 功能 | 描述 |
 |------|------|
-| [`core/schedule_models.py`](core/schedule_models.py) | 日程数据模型（DailySchedule, ScheduleEntry） |
-| [`core/schedule_generator.py`](core/schedule_generator.py) | LLM 日程生成器，负责生成每日日程 |
-| [`core/scene_action_generator.py`](core/scene_action_generator.py) | 场景动作生成器，根据场景生成人物动作 |
+| 🎨 **画图** | 支持文生图/图生图智能识别，兼容 OpenAI、豆包、Gemini、魔搭、ComfyUI 等 10 种 API 格式 |
+| 📸 **自拍** | 三种自拍模式（standard/mirror/photo），LLM 生成风格感知的手部动作，支持参考图图生图 |
+| 📅 **日程** | 内置日程管理，LLM 生成每日日程，回复自动注入当前活动，不再依赖外部插件 |
+| 👗 **衣柜** | 根据日程活动自动换装，支持管理员手动设置临时穿搭 |
 
-这些模块与 [`core/caption_generator.py`](core/caption_generator.py) 协同工作，实现完整的智能日程生成流程。
+## ✨ 主要特性
 
-## 🔍 智能参考搜索（v3.4.0 新增）
+### 🎯 智能图片生成
+- **自动模式识别**：智能判断文生图或图生图模式
+- **自拍模式**：支持 standard（前置自拍）/ mirror（对镜自拍）/ photo（第三人称照片）三种风格
+- **提示词优化**：自动将中文描述优化为专业英文 SD 提示词
+- **结果缓存**：相同参数复用之前的结果
+- **自动撤回**：可按模型配置延时撤回
 
-**功能描述**：当用户让麦麦画一个绘图模型不认识的角色（如"画一个博丽灵梦"）时，如果开启了此功能，插件会自动：
-1. 使用内置的 Bing 搜索引擎搜索该角色的图片
-2. 使用视觉模型（如 GPT-4o）分析图片特征（发色、瞳色、服饰等）
-3. 将提取的特征自动合并到提示词中，尽量还原角色
+### 🛠️ 多 API 格式支持
 
-**配置项** (`[search_reference]` 节)：
-- `enabled`: 是否开启，默认为 false
-- `vision_api_key`: 视觉模型的 API Key（必需）
-- `vision_base_url`: 视觉模型的 API 地址
-- `vision_model`: 视觉模型名称
+| format | 平台 | 说明 |
+|--------|------|------|
+| `openai` | OpenAI / 硅基流动 / Grok / NewAPI 等 | 通用 `/images/generations` 接口 |
+| `openai-chat` | 支持生图的 Chat 模型 | 通过 `/chat/completions` 生图，支持 SSE 流式响应 |
+| `doubao` | 豆包（火山引擎） | 使用 Ark SDK |
+| `gemini` | Google Gemini | 原生 `generateContent` 接口 |
+| `modelscope` | 魔搭社区 | 异步任务模式，自动轮询结果 |
+| `shatangyun` | 砂糖云 (NovelAI) | GET 请求 |
+| `mengyuai` | 梦羽 AI | 不支持图生图 |
+| `zai` | Zai (Gemini 转发) | OpenAI 兼容 |
+| `comfyui` | 本地 ComfyUI | 加载工作流 JSON，替换占位符，轮询结果 |
 
-## 常见问题
+### 🎨 /dr 命令系统
 
-- **API 密钥未配置/错误**：请检查 `config.toml` 中 `[api] volcano_generate_api_key`。
-- **图片描述为空**：需提供明确的图片描述。
-- **图片尺寸无效**：支持如 `1024x1024`，宽高范围 100~10000。
-- **依赖缺失**：请确保 MaiBot 插件系统相关依赖已安装。
-- **api 调用报错**
-400：参数不正确，请参考报错信息（message）修正不合法的请求参数，可能为插件发送的报文不兼容对应 api 供应商；
-401：API Key 没有正确设置；
-403：权限不够，最常见的原因是该模型需要实名认证，其他情况参考报错信息（message）；
-429：触发了 rate limits；参考报错信息（message）判断触发的是 RPM /RPD / TPM / TPD / IPM / IPD 中的具体哪一种，可以参考 Rate Limits 了解具体的限流策略
-504 / 503：一般是服务系统负载比较高，可以稍后尝试；
+#### 图片生成
+
+| 命令 | 说明 |
+|------|------|
+| `/dr <风格名>` | 对最近的图片应用预设风格（图生图） |
+| `/dr <描述>` | 自然语言生成图片（自动判断文/图生图） |
+| `/dr 用model2画一只猫` | 指定模型生成 |
+
+#### 风格管理
+
+| 命令 | 说明 |
+|------|------|
+| `/dr styles` | 列出所有可用风格 |
+| `/dr style <名>` | 查看风格详情 |
+| `/dr help` | 帮助信息 |
+
+#### 配置管理（需管理员权限）
+
+| 命令 | 说明 |
+|------|------|
+| `/dr list` | 列出所有模型 |
+| `/dr config` | 显示当前聊天流配置 |
+| `/dr set <模型ID>` | 设置 /dr 命令使用的模型 |
+| `/dr default <模型ID>` | 设置 Action 组件默认模型 |
+| `/dr model on\|off <模型ID>` | 开关指定模型 |
+| `/dr recall on\|off <模型ID>` | 开关指定模型的撤回 |
+| `/dr on` / `/dr off` | 开关插件（当前聊天流） |
+| `/dr selfie on\|off` | 开关自拍日程增强（当前聊天流） |
+| `/dr selfie standard\|mirror\|photo` | 切换自拍风格（当前聊天流） |
+| `/dr reset` | 重置当前聊天流的所有运行时配置 |
+| `/dr refresh <角色名>` | 刷新角色参考图（搜索 + 下载 + VLM 提取特征） |
+| `/dr status <角色名>` | 查看角色参考图状态 |
+| `/dr clear <角色名>` | 清除角色参考缓存 |
+
+#### 衣柜命令
+
+| 命令 | 说明 |
+|------|------|
+| `/dr wardrobe list` | 列出穿搭列表（仅自拍生效） |
+| `/dr wardrobe status` | 查看当前穿搭状态（含临时穿搭） |
+| `/dr wardrobe wear <衣服>` | 设置今日临时穿搭（需管理员，次日自动重置） |
+| `/dr wardrobe help` | 显示衣柜帮助信息 |
+| `/dr 衣柜 ...` | 衣柜命令的中文别名 |
+
+#### 日程命令
+
+| 命令 | 说明 |
+|------|------|
+| `/schedule` | 查看今日日程 |
+| `/schedule regen` | 用 LLM 重新生成今日日程 |
+
+> 运行时配置（模型切换、开关等）仅保存在内存中，重启后恢复为 config.toml 的全局设置。
+
+### 📅 内置日程系统
+
+插件自带日程管理，不再依赖外部 `autonomous_planning` 插件。
+
+- 每日自动通过 LLM 生成当天日程（可配置生成时间和模型）
+- LLM 不可用时自动使用工作日/周末兜底模板
+- 日程数据存储在本地 SQLite 数据库（`data/schedule.db`）
+- 在 LLM 生成聊天回复前自动注入麦麦当前活动信息
+- 支持 smart（按时间/消息数节流）和 always 两种注入模式
+
+### 👗 衣柜系统
+
+让麦麦的自拍可以根据日程活动自动切换服装。
+
+**穿搭优先级**（从高到低）：
+1. 临时穿搭 — `/dr wardrobe wear` 设置（当天有效）
+2. 场景匹配 — `custom_scenes` 规则匹配当前日程活动
+3. 日程 outfit — 日程生成时确定的穿搭
+4. 每日随机 — 从 `daily_outfits` 随机选（同一天固定）
+
+### ⏰ 自动自拍
+
+定时生成自拍图片并发布到 QQ 空间说说（需配合 [Maizone](https://github.com/Rabbit-Jia-Er/Maizone) 插件）。
+
+- 可配置间隔（默认 2 小时）
+- 安静时段控制（默认 00:00-07:00 不发）
+- LLM 根据日程活动描述生成风格感知的英文 SD 场景标签
+- 支持参考图片进行图生图自拍
+- 连续失败指数退避，重启后自动恢复上次自拍时间
+
+---
+
+## 🆕 新手快速配置指南
+
+> 如果你是第一次使用这个插件，请按照下面的步骤操作，5 分钟让麦麦学会画画！
+
+### 第一步：安装插件
+
+```shell
+cd MaiBot/plugins
+git clone https://github.com/nguspring/selfie_painter.git -b dev
+```
+
+### 第二步：获取 API 密钥
+
+| 平台 | 价格 | 推荐理由 |
+|------|------|----------|
+| **魔搭社区** | 免费 | 完全免费，适合新手体验 |
+| **硅基流动** | 便宜 | 新用户送额度，速度快 |
+| **豆包** | 便宜 | 字节跳动出品，质量不错 |
+| **本地 ComfyUI** | 免费 | 需要有显卡，完全本地运行 |
+
+**魔搭社区获取密钥步骤**：
+1. 打开 https://modelscope.cn/
+2. 注册/登录账号
+3. 进入「我的 → API-KEY管理」
+4. 创建新的 API Key
+
+### 第三步：修改配置文件
+
+重启 MaiBot 后，插件会自动生成 `config.toml` 文件。打开它，配置你的模型：
+
+```toml
+[plugin]
+enabled = true
+
+[models.model1]
+name = "魔搭免费模型"
+base_url = "https://api-inference.modelscope.cn/v1"
+api_key = "Bearer 你的密钥"
+format = "modelscope"
+model = "cancel13/liaocao"
+```
+
+### 第四步：测试
+
+重启 MaiBot，然后在群里发送：
+
+```
+麦麦，画一只可爱的小猫
+```
+
+如果麦麦回复了一张图片，恭喜你，配置成功了！🎉
+
+---
+
+## 📖 专业术语通俗解释
+
+| 术语 | 通俗解释 | 推荐值 |
+|------|----------|--------|
+| **seed（随机种子）** | `-1` 每次不同，固定值可复现 | `-1` |
+| **guidance_scale（引导强度）** | 值越高越"听话"，太高会生硬 | `2.5-7.5` |
+| **num_inference_steps（推理步数）** | 步数越多越精细，但更慢 | `20-50` |
+| **negative_prompt（负面提示词）** | 告诉 AI "不要画什么" | `lowres, bad anatomy, text` |
+
+---
+
+## ⚙️ 配置说明
+
+配置文件: `config.toml`，首次启动自动生成。版本更新时自动备份到 `old/` 目录。
+
+### 基础设置
+
+```toml
+[plugin]
+enabled = true
+
+[generation]
+default_model = "model1"          # Action 组件默认使用的模型 ID
+
+[components]
+enable_unified_generation = true  # 启用智能生图 Action
+enable_pic_command = true         # 启用 /dr 图片生成命令
+enable_pic_config = true          # 启用 /dr 配置管理命令
+enable_pic_style = true           # 启用 /dr 风格管理命令
+pic_command_model = "model1"      # /dr 命令默认模型
+admin_users = ["12345"]           # 管理员 QQ 号列表（字符串格式）
+max_retries = 2                   # API 失败重试次数
+enable_debug_info = false         # 显示调试信息
+enable_verbose_debug = false      # 打印完整请求/响应报文
+```
+
+### 模型配置
+
+```toml
+[models.model1]
+name = "我的模型"
+base_url = "https://api.siliconflow.cn/v1"
+api_key = "Bearer sk-xxx"
+format = "openai"                          # 见上文"多 API 格式支持"
+model = "Kwai-Kolors/Kolors"
+fixed_size_enabled = false
+default_size = "1024x1024"
+seed = -1
+guidance_scale = 2.5
+num_inference_steps = 20
+custom_prompt_add = ", best quality"       # 追加正面提示词
+negative_prompt_add = "lowres, bad anatomy" # 追加负面提示词
+support_img2img = true
+auto_recall_delay = 0                      # 自动撤回延时（秒），0=不撤回
+```
+
+### 自拍配置
+
+```toml
+[selfie]
+enabled = true
+reference_image_path = ""         # 参考图路径（留空=纯文生图）
+prompt_prefix = "blue hair, red eyes, 1girl"  # Bot 外观描述
+negative_prompt = ""
+schedule_enabled = true           # 日程增强
+default_style = "standard"        # standard / mirror / photo
+```
+
+### 衣柜配置
+
+```toml
+[wardrobe]
+enabled = false
+daily_outfits = ["哥特洛丽塔", "宽松休闲装", "黑丝JK"]
+auto_scene_change = true
+custom_scenes = ["睡觉的时候穿可爱睡衣", "运动的时候穿运动服"]
+```
+
+### 自动自拍配置
+
+```toml
+[auto_selfie]
+enabled = false
+interval_minutes = 120
+selfie_model = "model1"
+quiet_hours_start = "00:00"
+quiet_hours_end = "07:00"
+caption_enabled = true
+```
+
+### 日程配置
+
+```toml
+[schedule]
+schedule_identity = ""           # 身份补充
+schedule_interest = ""           # 兴趣爱好
+schedule_lifestyle = ""          # 生活规律
+schedule_history_days = 1        # 历史参考天数
+schedule_custom_prompt = ""      # 日程风格要求
+schedule_multi_round = true      # 启用多轮优化
+schedule_max_rounds = 2
+schedule_quality_threshold = 0.8
+
+[schedule_inject]
+schedule_intent_enable = true    # 启用意图识别
+schedule_context_cache_ttl_minutes = 30
+schedule_context_cache_max_turns = 10
+```
+
+### 风格配置
+
+```toml
+[styles]
+cartoon = "cartoon style, anime style, colorful, vibrant colors"
+watercolor = "watercolor painting style, soft colors, artistic"
+
+[style_aliases]
+cartoon = "卡通,动漫"
+watercolor = "水彩"
+```
+
+### ComfyUI 配置
+
+```toml
+[models.comfyui]
+name = "ComfyUI-本地"
+base_url = "http://127.0.0.1:8188"
+api_key = ""
+format = "comfyui"
+model = "my_workflow.json"       # 工作流文件（相对 workflow/ 目录）
+fixed_size_enabled = true
+default_size = "1024x1024"
+seed = -1
+guidance_scale = 8
+num_inference_steps = 30
+```
+
+**工作流占位符**：在 API 格式 JSON 中使用 `"${prompt}"`、`"${seed}"`、`"${negative_prompt}"`、`"${steps}"`、`"${cfg}"`、`"${width}"`、`"${height}"`、`"${denoise}"`、`"${image}"` 等占位符。
+
+---
+
+## 常见平台配置速查
+
+| 平台 | base_url | format |
+|------|----------|--------|
+| 魔搭社区 | `https://api-inference.modelscope.cn/v1` | `modelscope` |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | `openai` |
+| 豆包 | `https://ark.cn-beijing.volces.com/api/v3` | `doubao` |
+| OpenAI | `https://api.openai.com/v1` | `openai` |
+| 本地 ComfyUI | `http://127.0.0.1:8188` | `comfyui` |
 
 ## 魔搭链接及教程
 
-==具体流程步骤如下：==
+1. 注册一个[魔搭](https://modelscope.cn/)账号
+2. 根据[官网阿里云绑定教程](https://modelscope.cn/docs/accounts/aliyun-binding-and-authorization)完成认证
+3. 到主页申请 API key，参考[API推理介绍](https://modelscope.cn/docs/model-service/API-Inference/intro)
+4. 去[模型库](https://modelscope.cn/models)挑选生图模型，取模型名称
+5. 在 `config.toml` 中填入 key 和模型名称
 
-1. 注册一个魔搭账号。
-2. 然后你需要根据魔搭[官网阿里云绑定教程](https://modelscope.cn/docs/accounts/aliyun-binding-and-authorization)完成阿里云认证。
-3. 接着到你的魔搭主页申请一个 API key，参考[API推理介绍](https://modelscope.cn/docs/model-service/API-Inference/intro)。
-4. 现在你已经拥有了一个 key 可以直接去[模型库](https://modelscope.cn/models)挑选你想要使用的生图模型了，在每个模型的详细里都会有一段教程告诉你怎么使用，我们只需要取可以使用 API 推理的模型的模型名称就好了。
-5. 在该插件的配置文件中填入你获取的 key ，选择魔搭对应的请求地址，然后填入对应的模型名称即可。剩下的相关配置根据配置文件中的注释填入。
+---
+
+## 🔧 依赖说明
+
+- Python 3.12+
+- MaiBot 插件系统 0.10.x+
+- 火山方舟 SDK：`pip install 'volcengine-python-sdk[ark]'`（使用豆包时）
+- 可选依赖：`pip install aiohttp beautifulsoup4`（搜图功能）
+
+---
+
+## 💡 使用示例
+
+### 自然语言生图
+```
+用户：麦麦，画一张美少女
+麦麦：[生成图片]
+
+用户：[发送图片] 麦麦，把背景换成海滩
+麦麦：[图生图生成]
+```
+
+### 自拍模式
+```
+用户：麦麦，来张自拍！
+麦麦：[生成角色自拍照片]
+```
+
+### 命令式风格转换
+```
+用户：[发送图片]
+用户：/dr cartoon
+麦麦：[应用卡通风格]
+```
+
+---
 
 ## ⚠️ 注意事项
 
-- **状态文件**：插件会在目录下生成 `auto_selfie_state.json` 用于记录定时任务状态，请勿删除。
-- 请妥善保管 API 密钥，不要在公开场合泄露，各平台 API 可能有调用频率限制，请注意控制使用频率，生成的图片内容受模型和提示词影响，请遵守相关平台的使用规范
-- 模型是否支持图生图请参考各平台官方文档（注：在`support_img2img = true` - 是否支持图生图中填写true/false，请自行判断）
-- Action组件、魔搭、Grok、梦羽AI和砂糖云不支持图生图功能（注：梦羽AI和砂糖云支持NSFW，请自行判断）
+- 请妥善保管 API 密钥，不要在公开场合泄露
+- 各平台 API 可能有调用频率限制，请注意控制使用频率
+- 模型是否支持图生图请参考各平台官方文档
+- 生成的图片内容受模型和提示词影响，请遵守相关平台的使用规范
+
+## 常见问题
+
+- **API 密钥未配置/错误**：请检查 `config.toml` 中对应模型的 `api_key` 配置
+- **图片尺寸无效**：支持如 `1024x1024`，宽高范围 100~10000
+- **依赖缺失**：请确保 MaiBot 插件系统相关依赖已安装
+- **API 错误码**：400=参数错误 / 401=Key 错误 / 403=权限不足 / 429=频率限制 / 503/504=服务高负载
+
+---
 
 ## 🙏 致谢
 
 感谢以下开发者为本插件做出的贡献：
 
-- **原作者**：1021143806 (Ptrel) - 创建了原版 custom_pic_plugin 插件
-- **Rabbit-Jia-Er** - 添加了多模型调用和命令功能
-- **saberlights Kiuon** - 添加了自拍功能和自然语言命令功能
-- **A-Dawn** - 感谢对代码问题排查提供的思路，以及 A_MIND 插件带来的灵感启发；感谢提供反重力反代 gemini-3-pro-image 无法使用问题的热修复补丁
-- **XXXxx7258** - 感谢 Mai_Only_You 插件带来的灵感启发
+- **原作者**：1021143806 (Ptrel) — 创建了原版 custom_pic_plugin 插件（现 mais-art-journal）
+- **Rabbit-Jia-Er** — 添加了多模型调用和命令功能
+- **saberlights Kiuon** — 添加了自拍功能和自然语言命令功能
+- **A-Dawn** — 感谢对代码问题排查提供的思路，以及 A_MIND 插件带来的灵感启发；感谢提供反重力反代 gemini-3-pro-image 无法使用问题的热修复补丁
+- **XXXxx7258** — 感谢 Mai_Only_You 插件带来的灵感启发
+- **xuqian13** — 内置日程系统基于 [autonomous_planning_plugin](https://github.com/xuqian13/autonomous_planning_plugin) 的设计思路
 
 本插件搜图功能部分代码来自于 https://github.com/XXXxx7258/google_search_plugin
 
 **特别感谢**：感谢我的小乐作为首席体验官在线试毒:)
 
-## 📄 许可证
-
-本插件采用 AGPL-3.0 许可证。
-
-## 贡献和反馈
-
-欢迎提交 Issue 和 Pull Request！
-
 ---
-
-## 未来计划（大饼）
-
-原版插件兼容 ComfyUI 后会同步更新。继续对定时自拍功能进行升级，增加更多样化的自拍风格、智能场景选择和更自然的互动模式。
-
-**我的期望**：希望通过统一 TTS 语音合成插件、修改版 custom_pic_plugin 插件、A_MIND 插件、Mai_Only_You 插件这四个插件，塑造出一个真实的麦麦来陪伴用户。让麦麦不仅能用声音与用户交流，还能主动分享自己的生活照片，拥有自己的记忆和情感，成为一个真正有温度的数字伙伴。
 
 ## 📝 更新日志
 
-### v3.5.3 (修改版) - 2026-02-15
+### v3.6.0 (改版) — 2026-03-07
 
-- 🐛 修复 WebUI 与 config.toml 同步问题：
-  - 修复 styles/style_aliases 动态字段显示错位与重启后显示回滚
-  - WebUI 模型分节改为按 config 动态同步，避免固定段导致显示不一致
-- 🔐 修复模型 API Key 默认值风险：
-  - `api_key` 默认值改为空字符串，不再写入 `Bearer xxxxx...` 模板值
-  - 保留 placeholder/说明中的 Bearer 格式指引
+**🌟 大版本重构：合并上游 mais-art-journal + 多项新功能**
+
+本版本基于上游 [mais-art-journal](https://github.com/1021143806/mais-art-journal) 进行合并重构，同时引入大量改版独有的新功能。
+
+#### 合并自上游 mais-art-journal
+
+以下功能来自原作者的 mais-art-journal，本版本合并并适配：
+
+- 🔧 **API 客户端模块化**：`core/api_clients/` 引入 `BaseApiClient` 基类，每个 API 格式独立文件
+- 🔧 **自拍系统模块化**：`core/selfie/` 目录，提示词常量、场景动作生成器独立管理
+- 🆕 **ComfyUI 支持**：新增 `comfyui` 格式，支持本地/远程 ComfyUI 工作流 JSON 加载和占位符替换
+- 🆕 **photo 自拍模式**：新增第三人称照片模式，与 standard/mirror 并列
+- 🔧 角色参考图命令（`/dr refresh`、`/dr status`、`/dr clear`）
+
+#### 改版新增功能（nguspring）
+
+以下功能为本改版独有，不存在于上游：
+
+- 🆕 **内置日程系统**：完整的日程管理模块（`core/schedule/`，含 LLM 生成器、人设构建器、质量评估器、SQLite 持久化、兜底模板等 10 个文件）
+- 🆕 **日程人设驱动**：日程生成读取麦麦人设配置（性格、兴趣、生活规律）
+- 🆕 **日程历史记忆**：参考昨天日程，让日程有连续性
+- 🆕 **日程质量评分**：多轮生成优化，质量不达标自动重试
+- 🆕 **日程智能注入**：意图识别 + 对话上下文缓存，避免不相关场景注入（`core/inject/`，5 个文件）
+- 🆕 **衣柜系统**：`[wardrobe]` 配置，每日随机穿搭、场景自动换装、管理员临时穿搭（`core/wardrobe/`）
+- 🆕 **SSE 流式响应**：`openai-chat` 格式支持 SSE 流式解析，兼容 grok2api 等强制流式服务
+- 🆕 **衣柜命令**：`/dr wardrobe list/status/wear/help`，中文别名 `/dr 衣柜`
+- 🆕 **日程命令**：`/schedule`、`/schedule regen`
+- 🆕 **代理配置**：新增 `[proxy]` 配置段
+- 🆕 **提示词优化器自定义 API**：支持 `custom_api_base_url`、`custom_api_key`、`custom_model` 配置
+- 🆕 **自动自拍目标群/用户**：`send_to_chat` 配置 `target_groups`/`target_users`（替代旧版 `chat_id_list`）
+
+#### 其他改进
+
+- 🔧 **自拍三模式提示词修复**：修复 standard/mirror/photo 提示词冲突
+- 🔧 **衣柜持久化**：临时穿搭存储到 `schedule.db`，重启不丢失
+- 🔧 **许可证信息统一**：当前发布材料统一为 AGPL-3.0
+- 🔧 **工具函数整理**：`core/utils/` 目录，共享常量和工具函数
+
+#### ⚠️ 破坏性变更
+
+- ⚠️ 代码结构大幅重构，直接替换旧版文件可能不兼容
+- ⚠️ 部分旧配置项已移除或重命名，请删除旧版后重新安装（详见 [升级指南](#-从-v35x-升级到-v360)）
 
 ---
-
-### v3.5.2-beta.2 (修改版) - 2026-01-31
-
-**本 Beta 版用于在麦麦上进行测试（beta 分支）。**
-
-- 🐛 修复日程生成 `parse_failed`：使用 `JSONDecoder.raw_decode` 提取完整 JSON 数组，避免 `scene_variations` 等嵌套数组导致的正则截断；并增强解析日志（提取长度 + JSONDecodeError 上下文）
-
----
-
-### v3.5.2-beta.1 (修改版) - 2026-01-30
-
-**本 Beta 版用于在麦麦上进行测试（beta 分支）。**
-
-- ✅ 日程生成 fallback 时必落“失败包”（含 prompt/response/异常堆栈/模型选择路径），并在 `daily_schedule_*.json` 写入 `fallback_reason/fallback_failure_package`
-- ✅ 人设变更触发当日日程自动重生成（基于签名）
-- ✅ 跨天去重：保留最近 N 天日程文件并回灌摘要到 prompt（默认 7 天，可配置 `auto_selfie.schedule_retention_days`）
-- ✅ fallback 模板升级为多套（base+variant），并强制去除 phone/smartphone/mobile/device
-- ✅ 变体闭环：生成图像使用 `SceneVariation`，发送成功后标记已用并持久化
-- ✅ 配文贴图：图片生成后做 VLM 视觉摘要注入配文；可选一致性自检
-- ✅ Phase 5：叙事连贯：发送成功后更新 `DailyNarrativeState`，配文使用叙事上下文承上启下
-- 🔧 修复配置键名不一致：日程生成模型配置使用 `auto_selfie.schedule_generator_model`（旧键 `schedule_model_id` 兼容）
-
----
-
-### v3.5.1 (修改版) - 2026-01-25
-
-**🔧 修复日程回退逻辑 Bug**
-
-本版本修复了当 LLM 生成日程失败触发回退机制时，时间点与场景错位的问题。
-
-**修复内容：**
-- 🐛 **修复回退日程错位**：之前的逻辑是按顺序分配预设场景，导致如果用户配置的时间点较少，晚上的时间点会被错误分配下午的场景（如晚上8点喝下午茶）。现在的逻辑改为按**时间接近度**智能匹配，确保每个时间点都能匹配到最合适的场景。
-
----
-
-### v3.5.0 (修改版) - 2026-01-24
-
-**🌟 核心新功能：智能日程模式 (Smart Mode)**
-
-本版本统一使用 Smart 模式处理所有定时自拍，通过 LLM 动态生成每日日程，实现最自然的"真人感"自拍体验。
-
-**主要新增功能：**
-- 🌟 **智能日程模式**：LLM 根据时间点动态生成每日日程，每个时间点包含完整场景描述（地点、姿势、表情、服装、动作）
-- 📝 **配文多样化**：支持5种配文类型（叙事式、询问式、分享式、独白式、无配文），智能选择
-- 🎭 **人设注入功能**：支持自定义人设描述和回复风格，让配文和日程更符合角色设定
-- 🎲 **间隔补充发送**：日程时间点之外也会有概率随机发送自拍，让时间分布更自然
-- 🆕 **OpenAI-Chat 格式支持**：新增 `openai_chat_client.py`，修复反重力反代 gemini-3-pro-image 问题
-- 🆕 **手动自拍读取日程**：请求"来张自拍"时会读取当天日程，保持场景一致性
-
-**重要改进：**
-- 🔧 **代码架构精简**：移除旧版叙事系统（约 800 行冗余代码），统一使用 Smart 模式
-- 🔧 **配置 Schema 优化**：所有配置项添加详细中文说明，小白用户也能轻松理解
-- 🔧 **默认时间点增加**：从3个增加到9个（07:30 ~ 22:00），避免"重复场景"问题
-- 🐛 **修复手机描述问题**：场景变体不再生成带手机的图片
-- 🚀 **性能优化**：定时自拍采用"生成一次，发送多次"模式，多群发送只调用一次 API
-
-**新增模块：**
-- `core/schedule_models.py` - 日程数据模型
-- `core/schedule_generator.py` - LLM 日程生成器
-- `core/scene_action_generator.py` - 场景动作生成器
-- `core/openai_chat_client.py` - OpenAI-Chat API 客户端
-
-**破坏性变更：**
-- ⚠️ **移除 interval 模式**：自动转换为 smart 模式
-- ⚠️ **移除 character_name/character_persona**：人物外观特征由 `selfie.prompt_prefix` 控制
 
 <details>
-<summary>📜 v3.5.0 Beta 版本详细历史（点击展开）</summary>
+<summary>📜 v3.5.x 历史更新日志（点击展开）</summary>
 
-### v3.5.0-beta.14 (修改版)
+### v3.5.2 (修改版) — 2026-02-01
 
-**🔧 修复"重复场景"问题 + 配置优化**
+- 🐛 修复日程生成 `parse_failed`：使用 `JSONDecoder.raw_decode` 提取完整 JSON 数组
+- ✅ 日程生成 fallback 时必落"失败包"
+- ✅ 人设变更触发当日日程自动重生成（基于签名）
+- ✅ 跨天去重：保留最近 N 天日程文件并回灌摘要到 prompt
+- ✅ fallback 模板升级为多套（base+variant）
+- ✅ 变体闭环：生成图像使用 `SceneVariation`
+- ✅ 配文贴图：图片生成后做 VLM 视觉摘要注入配文
+- ✅ 叙事连贯：发送成功后更新 `DailyNarrativeState`
 
-本版本修复了定时自拍的"重复场景"问题，并大幅优化了配置Schema的注释，让小白用户也能轻松理解每个配置项。
+### v3.5.1 (修改版) — 2026-01-25
 
-**问题描述：**
-用户反馈：7点到9点半三张自拍都是"起床"场景，中午吃了两小时饭。
+- 🐛 修复回退日程错位：改为按时间接近度智能匹配
 
-**根因分析：**
-1. 默认时间点太少（只有3个：08:00, 12:00, 20:00），LLM只生成3条日程
-2. 间隔补充功能的"就近条目"策略会重复使用相同日程条目
+### v3.5.0 (修改版) — 2026-01-24
 
-**修复内容：**
-- 🔧 **增加默认时间点**：从3个增加到9个（07:30, 09:00, 10:30, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00）
-- 🔧 **暂时禁用间隔补充**：`enable_interval_supplement` 默认值改为 `false`
-- 📝 **优化配置注释**：所有配置项添加详细的中文说明和使用示例
-- 📝 **白名单格式说明**：明确说明config.toml中需要加双引号，多个ID用逗号隔开
-
----
-
-### v3.5.0-beta.13 (修改版)
-
-**🔧 新增 OpenAI-Chat API 客户端**
-
-本版本新增了 OpenAI-Chat 格式 API 客户端，修复反重力反代 gemini-3-pro-image 无法使用的问题。
-
-**新功能：**
-- 🆕 **OpenAI-Chat 格式支持**：新增 `openai_chat_client.py`，支持通过 chat/completions 接口生成图片
-- 🎯 **适用供应商**：Nano Banana、OpenRouter、Claude 等通过 chat/completions 返回图片的服务
-- 🔧 **智能提取**：支持从混合文本或 Markdown 中提取图片 URL 或 Base64 数据
-
-**感谢：**
-- 感谢 A-Dawn 提供热修复补丁！
-
----
-
-### v3.5.0-beta.12 (修改版)
-
-**🔧 代码架构精简**
-
-- 🗑️ 移除旧版叙事系统（约 535 行代码）
-- 🔧 精简 selfie_models.py（从 384 行到约 110 行）
-- 🐛 修复手机问题
-- ✅ 总代码量减少约 800 行（约 20%）
-
----
-
-### v3.5.0-beta.11 (修改版)
-
-**🐛 修复手机描述问题**
-
-- 🐛 更新 LLM 提示词，禁止生成包含"刷手机"、"玩手机"等描述
-- 🔧 使用 `zoning out`、`staring blankly`、`daydreaming` 等表达替代
-
----
-
-### v3.5.0-beta.10 (修改版)
-
-**🎨 LLM 驱动的场景变化**
-
-- 🆕 新增 `_adjust_scene_for_time_relation()` 方法
-- 🎭 时间关系场景变化（after/before 生成不同风格场景）
-
----
-
-### v3.5.0-beta.9 (修改版)
-
-**🎯 间隔补充"就近条目"策略**
-
-- 🆕 `DailySchedule.get_closest_entry()` 方法
-- 🎯 时间关系感知（before/after/within）
-- 📝 智能配文调整
-
----
-
-### v3.5.0-beta.8 (修改版)
-
-**🐛 间隔补充日程一致性修复**
-
-- 🐛 修复间隔补充触发时不读取日程数据的问题
-- 🆕 `ScheduleEntry.is_time_in_range()` 方法
-
----
-
-### v3.5.0-beta.7 (修改版)
-
-**🎭 人设注入功能**
-
-- 🆕 配文人设注入（caption_persona_enabled/text/reply_style）
-- 🆕 日程人设注入（schedule_persona_enabled/text/lifestyle）
-
----
-
-### v3.5.0-beta.5 (修改版)
-
-**🗑️ 移除角色配置功能**
-
-- 🗑️ 移除 character_name 和 character_persona
-- ✅ 完全使用 selfie.prompt_prefix 控制人物外观
-
----
-
-### v3.5.0-beta.4 (修改版)
-
-**📝 配置结构简化**
-
-- 📝 重写 auto_selfie 配置（8个逻辑分组）
-- 🆕 新增 schedule_times、character_name、character_persona
-- 🗑️ 删除 schedule_mode 等废弃配置项
-
----
-
-### v3.5.0-beta.3 (修改版)
-
-**🎲 间隔补充发送功能**
-
-- 🆕 间隔补充发送（日程时间点之外随机发送）
-- 🆕 新增配置项：enable_interval_supplement、interval_minutes、interval_probability
-
----
-
-### v3.5.0-beta.2 (修改版)
-
-**🔧 配置 Schema 更新**
-
-- 🆕 手动自拍读取日程
-- 🔧 schedule_mode 默认值改为 smart
-- 🆕 新增 schedule_generator_model、schedule_min_entries/max_entries
-
----
-
-### v3.5.0-beta.1 (修改版)
-
-**🌟 智能日程模式初版**
-
-- 🌟 Smart Mode 核心功能
-- 🎬 完整场景描述
-- 🎭 场景驱动动作
+- 🌟 智能日程模式 (Smart Mode)
 - 📝 配文多样化（5种类型）
-- 🚀 "生成一次，发送多次"模式
+- 🎭 人设注入功能
+- 🎲 间隔补充发送
+- 🆕 OpenAI-Chat 格式支持
+- 🆕 手动自拍读取日程
+- 🔧 代码架构精简（移除约 800 行冗余代码）
 
 </details>
 
+<details>
+<summary>📜 v3.4.x 及更早历史（点击展开）</summary>
+
 ### v3.4.1 (修改版)
-- 🆕 **定时自拍黑白名单**：支持白名单（仅允许）和黑名单（排除）两种模式，更灵活地控制自拍发送对象。
-- 🔧 **命令增强**：`/dr auto_selfie` 命令支持直接管理名单（add/remove）、切换模式（mode）和开关功能。
-- 🔧 **配置迁移**：`allowed_chat_ids` 自动迁移到新的 `chat_id_list` 格式。
-- 🆕 **定时自拍持久化**：重启 Bot 后自动恢复定时状态，不会丢失进度。
-- 🆕 **多时间点自拍**：支持 `times` 模式，可设置每天固定时间（如 `["08:00", "20:00"]`）发送自拍。
-- 🔧 **自拍场景配置化**：可在配置文件的 `[selfie]` 节中自定义 `scene_standard` 和 `scene_mirror`，打造专属人设背景。
-- 🛠️ **容错优化**：多时间点模式支持 ±120 秒的时间窗口，防止任务调度延迟导致漏发。
+- 🆕 定时自拍黑白名单
+- 🆕 定时自拍持久化
+- 🆕 多时间点自拍
 
 ### v3.4.0
-- ⏰ **定时自拍功能正式版**：完整实现定时自拍功能，支持睡眠模式、自定义间隔及回复生成
-- 🔍 **内置搜图引擎**：智能参考搜索功能现在不再依赖google_search_plugin，内置独立的Bing图片搜索引擎
-- 📷 **自拍模式双负面提示词**：将自拍模式负面提示词拆分为`negative_prompt_standard`（标准自拍）和`negative_prompt_mirror`（对镜自拍）两个配置项
-- 🎨 **7个魔搭模型预设**：内置7个精选魔搭模型预设配置（详见 `model_presets.toml`）：
-  - Tongyi-MAI/Z-Image-Turbo（推荐默认，速度快质量好）
-  - QWQ114514123/WAI-illustrious-SDXL-v16（动漫插画风格）
-  - ChenkinNoob/ChenkinNoob-XL-V0.2（高质量二次元）
-  - Sawata/Qwen-image-2512-Anime（Qwen动漫专用）
-  - cancel13/liaocao（北欧绘本画风）
-  - Remile/Qwen-Image-2512-FusionLoRA-ByRemile（融合LoRA多风格）
-  - Qwen/Qwen-Image-Edit-2511（Qwen官方图像编辑）
-- 📦 **新增依赖声明**：添加 `requirements.txt`，声明 `aiohttp` 和 `beautifulsoup4` 依赖
+- ⏰ 定时自拍功能正式版
+- 🔍 内置搜图引擎
+- 🎨 7个魔搭模型预设
 
-### v3.3.8 (修改版)
-- 🔧 优化自拍模式提示词
-- 🆕 拆分自拍负面提示词：支持standard和mirror两种模式使用不同的负面提示词配置，防止冲突
-  - negative_prompt_standard：标准自拍模式（禁止设备出现）
-  - negative_prompt_mirror：对镜自拍模式（允许设备出现）
-- 🔧 修复调用点参数问题：统一所有_execute_unified_generation调用点传递7个参数
-- 🔧 尝试解决planner一直读上文导致的姿势固定问题
-- 🔧 版本号更新：插件版本更新至3.3.8
-
-### v3.3.7 (修改版)
-- 🔧 **优化search_reference功能说明**：明确该功能只能缓解而非完全解决模型不认识角色的问题
-- 🔧 **新增使用提示**：如果模型本身就能识别角色或具备联网能力（如Gemini），则无需开启此功能
-- 🔧 **新增使用提示**：图生图模式下不建议开启此功能
-- 🆕 **新增模型7配置**：Qwen/Qwen-Image-Edit-2511，支持图生图功能
-- 🔧 **更新模型1描述**：Tongyi-MAI/Z-Image-Turbo适合日常和真实风格
-- 🔧 **模型标题优化**：所有模型标题使用原始模型名称，不再翻译
-- 🔧 **缓存默认值调整**：结果缓存默认值改为false，避免用户首次使用时意外启用缓存
-- 🔧 **版本号更新**：插件版本更新至3.3.7
-
-### v3.3.6 (修改版)
-- 🆕 **新增6个预设魔搭模型配置**：通义MAI极速版、WAI插画SDXL、ChenkinNoob XL、Qwen动漫2512、潦草模型、Qwen融合LoRA
-- 🆕 **新增写实风格配置**：reality风格，照片级写实风格
-- 🔧 **优化卡通风格配置**：更新cartoon风格提示词，更符合二次元风格
-- 🔧 **模型管理界面优化**：模型管理标签页显示所有预设模型
-- 🔧 **版本号更新**：插件版本更新至3.3.6
-
-### v3.3.5 (修改版)
-- 🆕 **内置搜索引擎功能**：将联网搜索插件的搜图功能内置到AI绘图插件中
-- 🆕 **新增 search_engines 模块**：包含Bing、搜狗、DuckDuckGo三种搜索引擎
-- 🔧 **智能参考搜索功能升级**：不再依赖外部联网搜索插件
-- 🔧 **依赖更新**：新增 aiohttp、beautifulsoup4、lxml、ddgs 依赖包
-
-### v3.3.4 (修改版)
-- 🆕 **新增定时自拍功能**：支持定时自动发送自拍，让Bot更像真人
-- 🆕 **新增智能参考搜索功能**：自动搜索角色图片并提取特征，解决模型不认识角色的问题
-- 🆕 **新增自拍负面提示词配置**：支持单独设置自拍模式的负面提示词
-- 🆕 **新增 `/dr auto_selfie` 命令**：管理定时自拍功能
-- 🔧 **配置界面优化**：新增定时自拍和智能参考搜索配置节
-
-### v3.3.3
-- 🗑️ **移除基础中文转英文功能**：不再使用简单的词汇映射进行中文到英文的转换，完全依赖提示词优化器（LLM）进行高质量的提示词优化，提升生成效果。
-- 🔧 **优化OpenAI客户端响应处理**：增强base64图片数据清理，提升日志可读性。
-- 📝 **日志增强**：在关键步骤中显示使用的提示词，便于调试。
-
-### v3.3.1
-- 🆕 **新增 API 格式**：支持砂糖云(NovelAI)、梦羽AI、Zai(Gemini转发)
-- 🧠 **提示词优化器**：自动将中文描述优化为专业英文提示词
-- 🔄 **自动撤回**：支持按模型配置图片自动撤回延时
-- 🎛️ **聊天流独立配置**：每个聊天流可独立开关插件/模型/撤回
-- 🛠️ **管理员命令**：新增 `/dr on|off`、`/dr model`、`/dr recall`、`/dr default`
+### v3.3.x
+- 砂糖云/梦羽 AI/Zai 格式支持
+- 提示词优化器
+- 自动撤回
+- 聊天流独立配置
 
 ### v3.2.0
-- 🎯 **新增自拍模式**：支持生成Bot角色的自拍照片，包含40+种智能手部动作库
-- 🎨 **自然语言命令**：`/dr 画一只猫` 智能判断文/图生图
-- 🔧 **模型指定**：支持 `/dr 用model1画猫` 动态指定模型
-- 🖼️ **Gemini 尺寸配置**：支持宽高比和分辨率配置（16:9、16:9-2K等）
-- ✨ **智能降级**：模型不支持图生图时自动转为文生图
-- 📋 **风格判断优化**：单个词但风格不存在时提示错误
+- 自拍模式
+- 自然语言命令
+- Gemini 尺寸配置
 
-### v3.1.2
-- 🎯 智能文生图/图生图自动识别
-- 🛠️ 新增命令式配置管理功能
-- 🎨 风格别名系统
-- ⚡ 动态模型切换
-- 🐛 修复失败缓存共享问题
-- 🔧 优化API路径处理
-- 📋 简化显示信息
+### v3.1.x
+- 多模型配置
+- 缓存机制
+- 命令式配置管理
+- 风格别名系统
 
-### v3.1.1
-- 支持多模型配置
-- 新增缓存机制
-- 兼容多种API格式
+</details>
+
+---
 
 ## 🤝 基于 MaiBot 项目
-- 支持 0.8.x - 0.10.x
-  - 0.9.x 升级仅配置文件新增两个字段，所以不影响 0.8 版本使用，
-  - 0.10 修改支持版本号可直接加载成功
-  - 目前改为一直支持最新版
 
-插件开发历程
+- 支持 0.10.x+（目前改为一直支持最新版）
+- MaiBot 项目地址：https://github.com/MaiM-with-u/MaiBot
 
-- 该插件基于 MaiBot 最早期官方豆包生图示例插件修改而来，最早我是为了兼容 GPT 生图进行修改，添加对 GPT 生图模型直接返回 base64 格式图片的兼容判断，因为 GPT 生图太贵了，所以后续想兼容魔搭社区的免费生图，新增一层报文兼容。（我不是计算机专业，大部分代码来自 DeepSeek R1 研究了很久，不得不说确实很好玩。）
-- 目前支持三种报文返回，即三个平台的图片返回报文 url，image，base64，如果其他平台返回的报文符合以上三种格式也可以正常使用，可以自行尝试。
-- MaiBot 0.8 版本更新，根据新插件系统进行重构。
-- Rabbit-Jia-Er 加入，添加可以调用多个模型和命令功能。
-- saberlights Kiuon 加入，添加自拍功能和自然语言命令功能。
+## 插件开发历程
+
+1. 最初基于 MaiBot 早期官方豆包生图示例插件修改而来
+2. MaiBot 0.8 版本更新，根据新插件系统进行重构
+3. Rabbit-Jia-Er 加入，添加多模型调用和命令功能
+4. saberlights Kiuon 加入，添加自拍功能和自然语言命令功能
+5. 原作者将 custom_pic_plugin 升级为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)
+6. nguspring 加入，基于原版开发修改版 selfie_painter（v3.4.x ~ v3.5.x）：日程系统重大升级（人设驱动、历史记忆、多轮生成、智能注入）
+7. v3.6.0：基于 mais-art-journal 合并重构为 selfie_painter_v2，新增衣柜系统、SSE 流式等
 
 ## 🔗 版权信息
 
 - 作者：nguspring
 - 许可证：AGPL-3.0
 - 项目主页：https://github.com/nguspring/selfie_painter
+
+## 贡献和反馈
+
+欢迎提交 Issue 和 Pull Request！
+
+联系 QQ：1021143806，3082618311

@@ -5,22 +5,32 @@
 old/
 __pycache__/
 .claude
-upgrade_files_*/
-upgrade_files/
+test/*
 
 # 忽略特定文件
-config.toml
-config.toml.backup
-*.backup
+config*.toml
+!config.toml.example
+图像到图像（简易）.json
+文生图（效果最好的一个）.json
 .env
 nul
-
-# 忽略升级包压缩文件
-upgrade_files_*.zip
-custom_pic_plugin_upgrade_files_*.zip
 
 # 忽略特定扩展名的文件（递归）
 **/*.tmp
 
 # 不忽略某个特定文件（例外规则）
 #!important.log
+
+# 忽略数据库文件
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+
+# 开发计划文档（本地保留，不提交）
+SCHEDULE_ENHANCEMENT_PLAN.md
+WARDROBE_REFACTOR_PLAN.md
+
+# 运行时数据目录（保留 .gitkeep）
+data/*
+!data/.gitkeep

@@ -1,10 +1,15 @@
-from typing import List, Tuple, Type, Dict, Any
-import os
-import copy
-import re
+# pyright: reportIncompatibleVariableOverride=false
+# pyright: reportIncompatibleMethodOverride=false
+# pyright: reportMissingImports=false
+# pyright: reportMissingTypeArgument=false
 
+from typing import List, Tuple, Type, Dict, Any, Optional
+import asyncio
+import os
+
+from src.common.logger import get_logger
 from src.plugin_system.base.base_plugin import BasePlugin
-from src.plugin_system.base.component_types import ComponentInfo
+from src.plugin_system.base.component_types import ComponentInfo, PythonDependency
 from src.plugin_system import register_plugin
 from src.plugin_system.base.config_types import (
     ConfigField,
@@ -13,240 +18,107 @@ from src.plugin_system.base.config_types import (
     ConfigTab,
 )
 
-from .core.pic_action import CustomPicAction
+from .core.pic_action import SelfiePainterAction
 from .core.pic_command import PicGenerationCommand, PicConfigCommand, PicStyleCommand
-from .core.config_manager import EnhancedConfigManager
+from .core.wardrobe_command import WardrobeCommand
+from .core.schedule_inject_handler import ScheduleInjectHandler
+from .core.schedule_command import ScheduleCommand
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
 
-# ================================================================================
-# 模型配置工厂函数 - 避免重复定义相同的字段结构
-# ================================================================================
+if tomllib is not None:
+    _TOMLDecodeError = tomllib.TOMLDecodeError
+else:
+    _TOMLDecodeError = ValueError
 
-
-def _create_model_config_schema(
-    name: str = "Model",
-    model: str = "model-name",
-    base_url: str = "https://api-inference.modelscope.cn/v1",
-    api_key: str = "",
-    format_type: str = "modelscope",
-    default_size: str = "1024x1024",
-    guidance_scale: float = 2.5,
-    custom_prompt_add: str = "",
-    negative_prompt_add: str = "low quality, worst quality, bad quality, lowres, blurry, text, watermark, signature, extra arms, extra legs, extra hands, extra fingers, extra toes, missing fingers, bad anatomy, bad hands, bad proportions, extra thighs, extra calves, leg duplication, leg artifacts, logo, bubble, extra limbs",
-) -> Dict[str, ConfigField]:
-    """
-    创建模型配置 Schema 的工厂函数
-
-    Args:
-        name: 模型显示名称
-        model: 模型名称
-        base_url: API 地址
-        api_key: API 密钥
-        format_type: API 格式类型
-        default_size: 默认图片尺寸
-        guidance_scale: 指导强度
-        custom_prompt_add: 正面提示词增强
-        negative_prompt_add: 负面提示词
-
-    Returns:
-        模型配置 Schema 字典
-    """
-    return {
-        "name": ConfigField(
-            type=str,
-            default=name,
-            description="模型显示名称，在模型列表中展示，版本更新后请手动从 old 目录恢复配置",
-            order=1,
-        ),
-        "base_url": ConfigField(
-            type=str,
-            default=base_url,
-            description="API服务地址。示例: OpenAI=https://api.openai.com/v1, 硅基流动=https://api.siliconflow.cn/v1, 豆包=https://ark.cn-beijing.volces.com/api/v3, 魔搭=https://api-inference.modelscope.cn/v1, Gemini=https://generativelanguage.googleapis.com",
-            placeholder="https://api.example.com/v1",
-            order=2,
-        ),
-        "api_key": ConfigField(
-            type=str,
-            default=api_key,
-            description="API密钥。OpenAI/modelscope格式需'Bearer '前缀，豆包/Gemini格式无需前缀。默认留空，请自行填写",
-            input_type="password",
-            placeholder="Bearer sk-xxx 或 sk-xxx",
-            order=3,
-        ),
-        "format": ConfigField(
-            type=str,
-            default=format_type,
-            description="API格式。openai=通用格式，openai-chat=Chat接口生图，doubao=豆包，gemini=Gemini，modelscope=魔搭，shatangyun=砂糖云，mengyuai=梦羽AI，zai=Zai",
-            choices=["openai", "openai-chat", "gemini", "doubao", "modelscope", "shatangyun", "mengyuai", "zai"],
-            order=4,
-        ),
-        "model": ConfigField(
-            type=str,
-            default=model,
-            description="模型名称。梦羽AI格式填写模型索引数字（如0、1、2）",
-            placeholder="model-name",
-            order=5,
-        ),
-        "fixed_size_enabled": ConfigField(
-            type=bool,
-            default=False,
-            description="是否固定图片尺寸。开启后强制使用default_size，关闭则麦麦选择",
-            order=6,
-        ),
-        "default_size": ConfigField(
-            type=str,
-            default=default_size,
-            description="默认图片尺寸。格式如 1024x1024 或 16:9",
-            placeholder="1024x1024",
-            order=7,
-        ),
-        "seed": ConfigField(
-            type=int, default=-1, description="随机种子，固定值可确保结果可复现", min=-1, max=2147483647, order=8
-        ),
-        "guidance_scale": ConfigField(
-            type=float,
-            default=guidance_scale,
-            description="指导强度。豆包推荐5.5，其他推荐2.5",
-            min=0.0,
-            max=20.0,
-            step=0.5,
-            order=9,
-        ),
-        "num_inference_steps": ConfigField(
-            type=int, default=30, description="推理步数，影响质量和速度。推荐20-50", min=1, max=150, order=10
-        ),
-        "watermark": ConfigField(type=bool, default=False, description="是否添加水印", order=11),
-        "custom_prompt_add": ConfigField(
-            type=str,
-            default=custom_prompt_add,
-            description="正面提示词增强，自动添加到用户描述后",
-            input_type="textarea",
-            rows=2,
-            order=12,
-        ),
-        "negative_prompt_add": ConfigField(
-            type=str,
-            default=negative_prompt_add,
-            description="负面提示词，避免不良内容",
-            input_type="textarea",
-            rows=2,
-            order=13,
-        ),
-        "artist": ConfigField(type=str, default="", description="艺术家风格标签（砂糖云专用）", order=14),
-        "support_img2img": ConfigField(type=bool, default=True, description="该模型是否支持图生图功能", order=15),
-        "auto_recall_delay": ConfigField(
-            type=int, default=0, description="自动撤回延时（秒）。0表示不撤回", min=0, max=120, order=16
-        ),
-    }
-
-
-# 预定义的模型配置列表（用于生成 config_schema）
-_MODEL_PRESETS = [
-    {
-        "name": "Tongyi-MAI/Z-Image-Turbo",
-        "model": "Tongyi-MAI/Z-Image-Turbo",
-        "default_size": "1024x1024",
-        "custom_prompt_add": "",
-    },
-    {
-        "name": "QWQ114514123/WAI-illustrious-SDXL-v16",
-        "model": "QWQ114514123/WAI-illustrious-SDXL-v16",
-        "default_size": "1024x1024",
-        "custom_prompt_add": "",
-    },
-    {
-        "name": "ChenkinNoob/ChenkinNoob-XL-V0.2",
-        "model": "ChenkinNoob/ChenkinNoob-XL-V0.2",
-        "default_size": "832x1216",
-        "custom_prompt_add": "esthetic, excellent, medium resolution, newest",
-    },
-    {
-        "name": "Sawata/Qwen-image-2512-Anime",
-        "model": "Sawata/Qwen-image-2512-Anime",
-        "default_size": "832x1216",
-        "custom_prompt_add": "",
-    },
-    {
-        "name": "cancel13/liaocao",
-        "model": "cancel13/liaocao",
-        "default_size": "832x1216",
-        "custom_prompt_add": "",
-        "negative_prompt_add": "low quality, worst quality, bad quality, lowres, blurry, text, watermark, signature, extra arms, extra legs, extra hands, extra fingers, extra toes, missing fingers, bad anatomy, bad hands, bad proportions, extra thighs, extra calves, leg duplication, leg artifacts",
-    },
-    {
-        "name": "Remile/Qwen-Image-2512-FusionLoRA-ByRemile",
-        "model": "Remile/Qwen-Image-2512-FusionLoRA-ByRemile",
-        "default_size": "832x1216",
-        "custom_prompt_add": "",
-        "negative_prompt_add": "low quality, worst quality, bad quality, lowres, blurry, text, watermark, signature, extra arms, extra legs, extra hands, extra fingers, extra toes, missing fingers, bad anatomy, bad hands, bad proportions, extra thighs, extra calves, leg duplication, leg artifacts",
-    },
-    {
-        "name": "Qwen/Qwen-Image-Edit-2511",
-        "model": "Qwen/Qwen-Image-Edit-2511",
-        "default_size": "1024x1024",
-        "custom_prompt_add": "",
-    },
-]
-
-
-def _generate_model_schemas() -> Dict[str, Dict[str, ConfigField]]:
-    """生成所有模型配置的 Schema"""
-    schemas = {}
-    for i, preset in enumerate(_MODEL_PRESETS, start=1):
-        key = f"models.model{i}"
-        schemas[key] = _create_model_config_schema(
-            name=preset.get("name", f"Model {i}"),
-            model=preset.get("model", f"model-{i}"),
-            default_size=preset.get("default_size", "1024x1024"),
-            custom_prompt_add=preset.get("custom_prompt_add", ""),
-            negative_prompt_add=preset.get(
-                "negative_prompt_add",
-                "low quality, worst quality, bad quality, lowres, blurry, text, watermark, signature, extra arms, extra legs, extra hands, extra fingers, extra toes, missing fingers, bad anatomy, bad hands, bad proportions, extra thighs, extra calves, leg duplication, leg artifacts, logo, bubble, extra limbs",
-            ),
-        )
-    return schemas
+logger = get_logger("selfie_painter_v2")
 
 
 @register_plugin
-class CustomPicPlugin(BasePlugin):
-    """统一的多模型图片生成插件，支持文生图和图生图"""
+class SelfiePainterV2Plugin(BasePlugin):
+    """麦麦绘卷 v2 (selfie_painter_v2) - 智能多模型图片生成插件，支持文生图和图生图"""
 
     # 插件基本信息
-    plugin_name: str = "selfie_painter"  # type: ignore[assignment]
-    plugin_version: str = "3.5.3"
-    plugin_author: str = "Ptrel，Rabbit，saberlights Kiuon，nguspring"
-    enable_plugin: bool = True  # type: ignore[assignment]
-    dependencies: List[str] = []  # type: ignore[assignment]
-    python_dependencies: List[str] = ["aiohttp", "beautifulsoup4"]  # type: ignore[assignment]
-    config_file_name: str = "config.toml"  # type: ignore[assignment]
+    plugin_name = "selfie_painter_v2"
+    plugin_version = "3.6.0"
+    plugin_author = "Ptrel，Rabbit，saberlights Kiuon，nguspring"
+    enable_plugin = True
+    dependencies: List[str] = []
+    python_dependencies: List[PythonDependency] = [
+        PythonDependency(
+            package_name="requests",
+            optional=True,
+            description="用于部分图片后端（如魔搭、Gemini、砂糖云）的 HTTP 请求",
+        ),
+        PythonDependency(
+            package_name="httpx",
+            optional=True,
+            description="用于自动自拍发布时拉取网络图片",
+        ),
+        PythonDependency(
+            package_name="volcengine-python-sdk",
+            install_name="volcengine-python-sdk[ark]",
+            optional=True,
+            description="用于豆包（Ark）模型接入",
+        ),
+        PythonDependency(
+            package_name="beautifulsoup4",
+            install_name="beautifulsoup4",
+            optional=True,
+            description="用于角色参考图功能的 Bing 图片搜索解析",
+        ),
+    ]
+    config_file_name = "config.toml"
 
     # 配置节元数据
     config_section_descriptions = {
+        # ---- basic 标签页 ----
         "plugin": ConfigSection(title="插件启用配置", icon="info", order=1),
         "generation": ConfigSection(title="图片生成默认配置", icon="image", order=2),
         "components": ConfigSection(title="组件启用配置", icon="puzzle-piece", order=3),
+        # ---- network 标签页 ----
         "proxy": ConfigSection(title="代理设置", icon="globe", order=4),
         "cache": ConfigSection(title="结果缓存配置", icon="database", order=5),
+        # ---- features 标签页 ----
         "selfie": ConfigSection(title="自拍模式配置", icon="camera", order=6),
-        "auto_recall": ConfigSection(title="自动撤回配置", icon="trash", order=7),
+        "wardrobe": ConfigSection(
+            title="衣柜系统",
+            description="管理“穿搭(Outfit)”的配置入口：你可以在这里添加多套衣服标签，并为不同活动类型设置偏好权重（本任务仅新增配置与 WebUI 编辑入口，暂不接入自拍提示词）",
+            icon="shirt",
+            order=11,
+        ),
+        "schedule": ConfigSection(
+            title="内置日程配置", description="内置 SQLite 日程系统（模板兜底 + LLM 生成）", icon="calendar", order=7
+        ),
         "auto_selfie": ConfigSection(
-            title="定时自拍配置",
-            description="Bot会根据LLM智能日程动态发送自拍。v3.5.0起统一为smart模式，旧模式(interval/times/hybrid)自动升级",
-            icon="clock",
-            order=7,
+            title="自动自拍配置",
+            description="定时自动生成自拍并发送到聊天流或QQ空间。发送到聊天流无需额外插件；发布到QQ空间需安装 Maizone 插件。日程数据由内置日程系统提供",
+            icon="camera",
+            order=8,
+        ),
+        "schedule_inject": ConfigSection(
+            title="日程注入配置",
+            description="在 LLM 生成回复前注入麦麦当前日程信息，让回复更有代入感",
+            icon="inject",
+            order=9,
+        ),
+        "auto_recall": ConfigSection(title="自动撤回配置", icon="trash", order=11),
+        "search_reference": ConfigSection(
+            title="角色参考图配置",
+            description="通过搜索引擎获取角色参考图，VLM 提取特征后注入提示词以提升角色一致性",
+            icon="search",
+            order=10,
         ),
         "prompt_optimizer": ConfigSection(
             title="提示词优化器",
             description="使用 MaiBot 主 LLM 将用户描述优化为专业绘画提示词",
             icon="wand-2",
-            order=8,
+            order=10,
         ),
-        "search_reference": ConfigSection(
-            title="智能参考搜索配置",
-            description="自动搜索角色图片并提取特征，解决模型不认识角色的问题",
-            icon="search",
-            order=9,
-        ),
+        # ---- styles 标签页 ----
         "styles": ConfigSection(
             title="风格定义",
             description='预设风格的提示词。添加更多风格请直接编辑 config.toml，格式：风格英文名 = "提示词"',
@@ -256,20 +128,14 @@ class CustomPicPlugin(BasePlugin):
         "style_aliases": ConfigSection(
             title="风格别名", description="风格的中文别名映射。添加更多别名请直接编辑 config.toml", icon="tag", order=11
         ),
-        "logging": ConfigSection(title="日志配置", icon="file-text", collapsed=True, order=12),
+        # ---- models 标签页 ----
         "models": ConfigSection(
             title="多模型配置",
             description="添加更多模型请直接编辑 config.toml，复制 [models.model1] 整节并改名为 model2、model3 等",
             icon="cpu",
-            order=13,
+            order=12,
         ),
-        "models.model1": ConfigSection(title="模型1配置", icon="box", order=14),
-        "models.model2": ConfigSection(title="模型2配置", icon="box", order=15),
-        "models.model3": ConfigSection(title="模型3配置", icon="box", order=16),
-        "models.model4": ConfigSection(title="模型4配置", icon="box", order=17),
-        "models.model5": ConfigSection(title="模型5配置", icon="box", order=18),
-        "models.model6": ConfigSection(title="模型6配置", icon="box", order=19),
-        "models.model7": ConfigSection(title="模型7配置", icon="box", order=20),
+        "models.model1": ConfigSection(title="模型1配置", icon="box", order=13),
     }
 
     # 自定义布局：标签页
@@ -281,64 +147,72 @@ class CustomPicPlugin(BasePlugin):
             ConfigTab(
                 id="features",
                 title="功能配置",
-                sections=["selfie", "auto_recall", "auto_selfie", "prompt_optimizer", "search_reference"],
+                sections=[
+                    "selfie",
+                    "wardrobe",
+                    "schedule",
+                    "schedule_inject",
+                    "auto_selfie",
+                    "auto_recall",
+                    "prompt_optimizer",
+                    "search_reference",
+                    "prompt_optimizer",
+                ],
                 icon="zap",
             ),
             ConfigTab(id="styles", title="风格管理", sections=["styles", "style_aliases"], icon="palette"),
-            ConfigTab(
-                id="models",
-                title="模型管理",
-                sections=[
-                    "models",
-                    "models.model1",
-                    "models.model2",
-                    "models.model3",
-                    "models.model4",
-                    "models.model5",
-                    "models.model6",
-                    "models.model7",
-                ],
-                icon="cpu",
-            ),
-            ConfigTab(id="advanced", title="高级", sections=["logging"], icon="terminal", badge="Dev"),
+            ConfigTab(id="models", title="模型管理", sections=["models", "models.model1"], icon="cpu"),
         ],
     )
 
     # 配置Schema
-    config_schema: Dict[str, Dict[str, ConfigField]] = {  # type: ignore[assignment]
+    config_schema = {
         "plugin": {
             "name": ConfigField(
                 type=str,
-                default="selfie_painter",
-                description="智能多模型图片生成插件，支持文生图/图生图自动识别",
+                default="麦麦绘卷",
+                description="麦麦绘卷（Claude MAInet）— 智能多模型图片生成插件，支持文生图/图生图自动识别",
+                label="插件名称",
                 required=True,
                 disabled=True,
                 order=1,
             ),
             "config_version": ConfigField(
-                type=str, default="3.5.3", description="插件配置版本号", disabled=True, order=2
+                type=str, default="3.6.0", description="插件配置版本号", label="配置版本", disabled=True, order=2
             ),
             "enabled": ConfigField(
-                type=bool, default=False, description="是否启用插件，开启后可使用画图和风格转换功能", order=3
+                type=bool,
+                default=False,
+                description="是否启用插件。开启后麦麦可以画画，关闭则所有画图功能都不可用",
+                label="启用插件",
+                order=3,
             ),
         },
         "generation": {
             "default_model": ConfigField(
                 type=str,
                 default="model1",
-                description="默认使用的模型ID，用于智能图片生成。支持文生图和图生图自动识别",
+                description="默认使用的模型ID（对应模型管理中的配置）。第一次画图时使用这个模型，之后可通过 /dr set 命令切换",
+                label="默认模型",
+                hint="对应模型管理中的模型ID（如model1、model2）",
+                example="model1",
                 placeholder="model1",
                 order=1,
             ),
         },
         "cache": {
             "enabled": ConfigField(
-                type=bool, default=False, description="是否启用结果缓存，相同参数的请求会复用之前的结果", order=1
+                type=bool,
+                default=True,
+                description="是否启用结果缓存。开启后，相同的画图请求会复用之前的结果，节省时间和API费用",
+                label="启用缓存",
+                order=1,
             ),
             "max_size": ConfigField(
                 type=int,
                 default=10,
-                description="最大缓存数量，超出后删除最旧的缓存",
+                description="最大缓存数量。缓存图片超过这个数量后，会删除最旧的。建议 5-20",
+                label="最大缓存数",
                 min=1,
                 max=100,
                 depends_on="cache.enabled",
@@ -348,69 +222,90 @@ class CustomPicPlugin(BasePlugin):
         },
         "components": {
             "enable_unified_generation": ConfigField(
-                type=bool, default=True, description="是否启用智能图片生成Action，支持文生图和图生图自动识别", order=1
+                type=bool,
+                default=True,
+                description="是否启用智能画图功能。开启后麦麦会根据对话内容自动决定是否画图（支持文生图和图生图）",
+                label="智能生图",
+                order=1,
             ),
             "enable_pic_command": ConfigField(
-                type=bool, default=True, description="是否启用风格化图生图Command功能，支持/dr <风格>命令", order=2
+                type=bool,
+                default=True,
+                description="是否启用 /dr 命令。开启后可使用 /dr 风格名、/dr 描述 等命令画图",
+                label="图片生成命令",
+                order=2,
             ),
             "enable_pic_config": ConfigField(
-                type=bool, default=True, description="是否启用模型配置管理命令，支持/dr list、/dr set等", order=3
+                type=bool,
+                default=True,
+                description="是否启用配置管理命令（/dr list、/dr set 等）。需要管理员权限才能使用",
+                label="配置管理",
+                order=3,
             ),
             "enable_pic_style": ConfigField(
-                type=bool, default=True, description="是否启用风格管理命令，支持/dr styles、/dr style等", order=4
+                type=bool,
+                default=True,
+                description="是否启用风格管理命令（/dr styles、/dr style 等）",
+                label="风格管理",
+                order=4,
             ),
             "pic_command_model": ConfigField(
                 type=str,
                 default="model1",
-                description="Command组件使用的模型ID，可通过/dr set命令动态切换",
+                description="/dr 命令使用的模型ID。可通过 /dr set 命令动态切换",
+                label="Command模型",
                 placeholder="model1",
                 order=5,
             ),
             "enable_debug_info": ConfigField(
-                type=bool, default=False, description="是否启用调试信息显示，关闭后仅显示图片结果和错误信息", order=6
+                type=bool,
+                default=False,
+                description="是否显示调试信息。开启后会显示画图参数、耗时等信息，方便排查问题",
+                label="调试信息",
+                order=6,
             ),
             "enable_verbose_debug": ConfigField(
                 type=bool,
                 default=False,
-                description="是否启用详细调试信息，启用后会发送完整的调试信息以及打印完整的 POST 报文",
+                description="是否显示详细调试信息。开启后会打印完整的HTTP请求报文（适合开发者调试）",
+                label="详细调试",
                 order=7,
             ),
             "admin_users": ConfigField(
                 type=list,
                 default=[],
-                description="有权限使用配置管理命令的管理员用户列表，请填写字符串形式的用户ID",
+                description="管理员QQ号列表（字符串格式）。只有管理员才能使用 /dr set、/dr model 等配置命令",
+                label="管理员列表",
+                hint='字符串形式的用户ID，如 ["12345", "67890"]',
+                item_type="string",
                 placeholder='["用户ID1", "用户ID2"]',
                 order=8,
             ),
             "max_retries": ConfigField(
                 type=int,
                 default=2,
-                description="API调用失败时的重试次数，建议2-5次。设置为0表示不重试",
+                description="API调用失败时的重试次数。建议 1-3 次，太多会浪费时间",
+                label="重试次数",
                 min=0,
                 max=10,
                 order=9,
             ),
         },
-        "logging": {
-            "level": ConfigField(
-                type=str,
-                default="INFO",
-                description="日志记录级别，DEBUG显示详细信息",
-                choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                order=1,
-            ),
-            "prefix": ConfigField(
-                type=str, default="[unified_pic_Plugin]", description="日志前缀标识", placeholder="[插件名]", order=2
-            ),
-        },
         "proxy": {
             "enabled": ConfigField(
-                type=bool, default=False, description="是否启用代理。开启后所有API请求将通过代理服务器", order=1
+                type=bool,
+                default=False,
+                description="是否启用代理。开启后所有API请求都会通过代理服务器发送（适合网络受限的环境）",
+                label="启用代理",
+                order=1,
             ),
             "url": ConfigField(
                 type=str,
                 default="http://127.0.0.1:7890",
-                description="代理服务器地址，格式：http://host:port。支持HTTP/HTTPS/SOCKS5代理",
+                description="代理服务器地址。格式：http://IP:端口 或 socks5://IP:端口。示例: http://127.0.0.1:7890",
+                label="代理地址",
+                hint="支持 HTTP、HTTPS、SOCKS5 代理",
+                example="http://127.0.0.1:7890",
                 placeholder="http://127.0.0.1:7890",
                 depends_on="proxy.enabled",
                 depends_value=True,
@@ -419,7 +314,8 @@ class CustomPicPlugin(BasePlugin):
             "timeout": ConfigField(
                 type=int,
                 default=60,
-                description="代理连接超时时间（秒），建议30-120秒",
+                description="代理连接超时时间（秒）。建议 30-120 秒，太小可能连接失败",
+                label="超时时间",
                 min=10,
                 max=300,
                 depends_on="proxy.enabled",
@@ -428,59 +324,37 @@ class CustomPicPlugin(BasePlugin):
             ),
         },
         "styles": {
-            "hint": ConfigField(
-                type=str,
-                default='添加更多风格：编辑 config.toml，在 [styles] 节下添加 风格英文名 = "提示词"',
-                description="配置说明",
-                disabled=True,
-                order=0,
-            ),
             "cartoon": ConfigField(
                 type=str,
                 default="cartoon style, anime style, colorful, vibrant colors, clean lines",
                 description="卡通风格提示词",
+                label="卡通风格",
                 input_type="textarea",
                 rows=3,
                 order=1,
-            ),
-            "reality": ConfigField(
-                type=str,
-                default="photorealistic, professional photography, realistic details, soft natural light, cinematic lighting, proper leg anatomy, realistic proportions, intricate fabric textures",
-                description="写实风格提示词",
-                input_type="textarea",
-                rows=3,
-                order=2,
-            ),
+            )
         },
         "style_aliases": {
-            "hint": ConfigField(
-                type=str,
-                default='添加更多别名：编辑 config.toml，在 [style_aliases] 节下添加 风格英文名 = "中文别名"',
-                description="配置说明",
-                disabled=True,
-                order=0,
-            ),
             "cartoon": ConfigField(
                 type=str,
                 default="卡通",
                 description="cartoon 风格的中文别名，支持多别名用逗号分隔",
+                label="卡通别名",
                 placeholder="卡通,动漫",
                 order=1,
-            ),
-            "reality": ConfigField(
-                type=str,
-                default="现实, 真实",
-                description="reality 风格的中文别名，支持多别名用逗号分隔",
-                placeholder="现实, 真实",
-                order=2,
-            ),
+            )
         },
         "selfie": {
-            "enabled": ConfigField(type=bool, default=True, description="是否启用自拍模式功能", order=1),
+            "enabled": ConfigField(
+                type=bool,
+                default=False,
+                description="是否启用自拍模式。开启后麦麦可以发自拍（会自动添加角色外观描述）",
+            ),
             "reference_image_path": ConfigField(
                 type=str,
                 default="",
-                description="自拍参考图片路径（相对于插件目录或绝对路径）。配置后自动使用图生图模式，留空则使用纯文生图。若模型不支持图生图会自动回退",
+                description="自拍参考图片路径。配置后会用这张图作为参考生成自拍（图生图模式），留空则纯文字生成",
+                label="参考图片",
                 placeholder="images/reference.png",
                 depends_on="selfie.enabled",
                 depends_value=True,
@@ -489,7 +363,8 @@ class CustomPicPlugin(BasePlugin):
             "prompt_prefix": ConfigField(
                 type=str,
                 default="",
-                description="自拍模式专用提示词前缀。用于添加Bot的默认形象特征（发色、瞳色、服装风格等）。例如：'blue hair, red eyes, school uniform, 1girl'",
+                description="自拍专用外观描述。描述麦麦的样子（发色、瞳色、服装等），会自动添加到所有自拍提示词前",
+                label="提示词前缀",
                 input_type="textarea",
                 rows=2,
                 placeholder="blue hair, red eyes, school uniform, 1girl",
@@ -497,58 +372,79 @@ class CustomPicPlugin(BasePlugin):
                 depends_value=True,
                 order=3,
             ),
-            "negative_prompt_standard": ConfigField(
+            "negative_prompt": ConfigField(
                 type=str,
-                default="phone, smartphone, mobile device, camera, selfie stick, visible electronic device, phone in hand, hands holding device, device screen, fingers on phone",
-                description="标准自拍模式（standard）专用的负面提示词，会叠加在模型默认负面提示词上。标准自拍：手机在画框外，禁止手机出现",
+                default="",
+                description="自拍专用负面提示词。避免生成不想要的内容（手部畸形、多指等会自动添加）",
+                label="负面提示词",
                 input_type="textarea",
-                rows=2,
-                placeholder="phone, smartphone, camera...",
+                rows=3,
+                placeholder="lowres, bad anatomy, bad hands, extra fingers",
                 depends_on="selfie.enabled",
                 depends_value=True,
                 order=4,
             ),
-            "negative_prompt_mirror": ConfigField(
-                type=str,
-                default="selfie stick",
-                description="对镜自拍模式（mirror）专用的负面提示词，会叠加在模型默认负面提示词上。对镜自拍：需要手持设备拍照，允许拍照设备出现",
-                input_type="textarea",
-                rows=2,
-                placeholder="selfie stick",
+            "schedule_enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用日程增强自拍。开启后自拍会结合当前日程活动生成更贴合情境的场景",
+                label="日程增强",
                 depends_on="selfie.enabled",
                 depends_value=True,
                 order=5,
             ),
-            "negative_prompt": ConfigField(
+            "default_style": ConfigField(
                 type=str,
-                default="",
-                description="自拍模式通用的负面提示词（可选），会叠加在模型默认负面提示词上",
-                input_type="textarea",
-                rows=2,
-                placeholder="",
+                default="standard",
+                description="默认自拍风格。standard=前置自拍（拿手机），mirror=对镜自拍，photo=第三人称照片",
+                label="默认自拍风格",
+                choices=["standard", "mirror", "photo"],
                 depends_on="selfie.enabled",
                 depends_value=True,
                 order=6,
             ),
-            "scene_mirror": ConfigField(
-                type=str,
-                default="mirror selfie, reflection in mirror, holding phone in hand, phone visible, arm slightly bent, looking at mirror, indoor scene, soft lighting, high quality",
-                description="对镜自拍模式（mirror）的场景描述",
-                input_type="textarea",
-                rows=2,
-                depends_on="selfie.enabled",
-                depends_value=True,
-                order=7,
+        },
+        "wardrobe": {
+            # ========== 总开关（默认关闭） ==========
+            "enabled": ConfigField(
+                type=bool,
+                default=False,
+                description="是否启用衣柜系统。开启后自拍会根据日程活动自动选择合适的服装",
+                label="启用衣柜",
+                order=1,
             ),
-            "scene_standard": ConfigField(
-                type=str,
-                default="selfie, front camera view, (cowboy shot or full body shot or upper body), looking at camera, slight high angle selfie",
-                description="标准自拍模式（standard）的场景描述",
-                input_type="textarea",
-                rows=2,
-                depends_on="selfie.enabled",
+            
+            # ========== 每日穿搭 ==========
+            "daily_outfits": ConfigField(
+                type=list,
+                default=["哥特洛丽塔", "宽松休闲装", "黑丝JK", "白丝JK"],
+                description="每日穿搭列表。每天随机选一套作为当日穿搭。可写简短名称（如'哥特洛丽塔'）由LLM补充细节",
+                label="每日穿搭",
+                depends_on="wardrobe.enabled",
                 depends_value=True,
-                order=8,
+                order=10,
+            ),
+            
+            # ========== 自动换装 ==========
+            "auto_scene_change": ConfigField(
+                type=bool,
+                default=True,
+                description="自动场景换装。开启后根据日程活动自动匹配场景并换装（如睡觉时换睡衣）",
+                label="自动换装",
+                depends_on="wardrobe.enabled",
+                depends_value=True,
+                order=20,
+            ),
+            
+            # ========== 自定义场景 ==========
+            "custom_scenes": ConfigField(
+                type=list,
+                default=["睡觉的时候穿可爱睡衣", "运动的时候穿运动服"],
+                description="自定义场景规则。一句话格式：'在XX的时候穿XX'。例如：'在实验室的时候穿实验服'",
+                label="自定义场景",
+                depends_on="wardrobe.auto_scene_change",
+                depends_value=True,
+                order=30,
             ),
         },
         "auto_recall": {
@@ -556,728 +452,1985 @@ class CustomPicPlugin(BasePlugin):
                 type=bool,
                 default=False,
                 description="是否启用自动撤回功能（总开关）。关闭后所有模型的撤回都不生效",
+                label="启用撤回",
                 order=1,
             )
-        },
-        # ================================================================================
-        # 定时自拍配置 - 配置项按逻辑分组，清晰易懂
-        # ================================================================================
-        "auto_selfie": {
-            # ==================== 1. 基础开关 ====================
-            "enabled": ConfigField(
-                type=bool,
-                default=False,
-                description="【总开关】是否启用定时自拍功能。开启后麦麦会按照schedule_times设定的时间点自动发送自拍。需要先配置好chat_id_list指定发送目标",
-                order=1,
-            ),
-            # ==================== 2. 发送时间设置 ====================
-            "schedule_times": ConfigField(
-                type=list,
-                default=["07:30", "09:00", "10:30", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"],
-                description='【核心配置】每天发送自拍的时间点列表。格式：24小时制HH:MM。LLM会根据每个时间点自动生成对应的场景（如08:00生成起床场景）。建议配置5-9个时间点覆盖一天的活动。示例：["08:00", "12:00", "18:00", "21:00"]',
-                placeholder='["08:00", "12:00", "18:00", "21:00"]',
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=2,
-            ),
-            "sleep_mode_enabled": ConfigField(
-                type=bool,
-                default=True,
-                description="是否启用睡眠模式。开启后在sleep_start_time到sleep_end_time期间不会发送自拍，让麦麦也有休息时间",
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=3,
-            ),
-            "sleep_start_time": ConfigField(
-                type=str,
-                default="23:00",
-                description="睡眠开始时间，格式：24小时制HH:MM。从此时间开始进入睡眠模式。示例：23:00",
-                placeholder="23:00",
-                depends_on="auto_selfie.sleep_mode_enabled",
-                depends_value=True,
-                order=4,
-            ),
-            "sleep_end_time": ConfigField(
-                type=str,
-                default="07:00",
-                description="睡眠结束时间，格式：24小时制HH:MM。到此时间结束睡眠模式。示例：07:00",
-                placeholder="07:00",
-                depends_on="auto_selfie.sleep_mode_enabled",
-                depends_value=True,
-                order=5,
-            ),
-            # ==================== 3. 发送目标设置 ====================
-            "list_mode": ConfigField(
-                type=str,
-                default="whitelist",
-                description="名单模式选择。whitelist（白名单）=只向chat_id_list中的聊天发送自拍；blacklist（黑名单）=向所有聊天发送但排除chat_id_list中的",
-                choices=["whitelist", "blacklist"],
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=6,
-            ),
-            "chat_id_list": ConfigField(
-                type=list,
-                default=[],
-                description='【核心配置】自拍发送目标列表。⚠️格式说明：在config.toml文件中填写时，每个ID必须加双引号！多个ID用逗号隔开。群聊格式："qq:群号:group"，私聊格式："qq:用户QQ号:private"。示例：["qq:123456789:group", "qq:987654321:private"]。通过WebUI修改时无需手动加引号',
-                placeholder='["qq:123456789:group", "qq:987654321:private"]',
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=7,
-            ),
-            # ==================== 4. 日程生成设置 ====================
-            "schedule_min_entries": ConfigField(
-                type=int,
-                default=4,
-                description="每天日程的最少条目数。LLM生成日程时会确保至少有这么多条活动安排。建议4-6条",
-                min=1,
-                max=20,
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=8,
-            ),
-            "schedule_max_entries": ConfigField(
-                type=int,
-                default=8,
-                description="每天日程的最多条目数。限制LLM生成日程时的最大条目，避免日程过于繁忙。建议6-10条",
-                min=1,
-                max=20,
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=9,
-            ),
-            "schedule_generator_model": ConfigField(
-                type=str,
-                default="",
-                description="【进阶配置】日程生成使用的LLM模型ID。留空则自动使用MaiBot的replyer模型。注意：这是MaiBot主配置中的文本模型ID（如model_utils_1），不是本插件的绘图模型ID",
-                placeholder="留空使用默认",
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=10,
-            ),
-            "schedule_persona_enabled": ConfigField(
-                type=bool,
-                default=True,
-                description="是否启用日程人设注入。开启后LLM会根据schedule_persona_text中描述的角色身份来生成日程，让活动安排更符合人设",
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=11,
-            ),
-            "schedule_persona_text": ConfigField(
-                type=str,
-                default="是一个大二女大学生",
-                description="日程人设描述。描述角色的身份背景，LLM会据此生成符合人设的日程。示例：是一个大学生（会生成上课、图书馆等场景）；是一个上班族（会生成通勤、办公室等场景）；是一个自由职业者（时间更自由灵活）",
-                input_type="textarea",
-                rows=2,
-                placeholder="是一个大二女大学生，在市区租房住",
-                hint="描述角色的身份背景，影响日程中的活动场景",
-                depends_on="auto_selfie.schedule_persona_enabled",
-                depends_value=True,
-                order=12,
-            ),
-            "schedule_lifestyle": ConfigField(
-                type=str,
-                default="作息规律，喜欢宅家但偶尔也会出门",
-                description="生活习惯描述。控制日程的整体风格，如活动频率、外出习惯等。示例：早睡早起型/夜猫子型；宅家党/户外爱好者；社恐/社牛",
-                input_type="textarea",
-                rows=2,
-                placeholder="作息规律，喜欢宅家追剧，偶尔和朋友出去逛街",
-                hint="描述角色的生活习惯，让日程更符合人设",
-                depends_on="auto_selfie.schedule_persona_enabled",
-                depends_value=True,
-                order=13,
-            ),
-            # ==================== 5. 日程文件保留窗口 ====================
-            "schedule_retention_days": ConfigField(
-                type=int,
-                default=7,
-                description="日程文件保留天数（用于跨天去重与调试）。会保留最近 N 天的 daily_schedule_YYYY-MM-DD.json，早于该窗口的文件会自动清理",
-                min=0,
-                max=60,
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=14,
-            ),
-            # ==================== 6. 间隔补充发送（v3.5.0-beta.14：暂时禁用） ====================
-            "enable_interval_supplement": ConfigField(
-                type=bool,
-                default=False,
-                description='【暂时禁用】是否启用间隔补充发送。开启后会在schedule_times时间点之外随机触发自拍，让发送时间更自然。⚠️v3.5.0-beta.14临时禁用此功能以修复"就近条目"策略导致的重复场景问题（如多次显示"起床"场景）。建议保持关闭',
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=15,
-            ),
-            "interval_minutes": ConfigField(
-                type=int,
-                default=120,
-                description="间隔补充的最小时间间隔（分钟）。两次补充发送之间至少间隔这么久。默认120分钟=2小时",
-                min=30,
-                max=480,
-                depends_on="auto_selfie.enable_interval_supplement",
-                depends_value=True,
-                order=16,
-            ),
-            "interval_probability": ConfigField(
-                type=float,
-                default=0.3,
-                description="间隔补充的触发概率。每次达到间隔时间时，有此概率实际触发发送。0.3=30%概率。范围0.0-1.0",
-                min=0.0,
-                max=1.0,
-                step=0.1,
-                depends_on="auto_selfie.enable_interval_supplement",
-                depends_value=True,
-                order=17,
-            ),
-            # ==================== 7. 图片生成设置 ====================
-            "model_id": ConfigField(
-                type=str,
-                default="model1",
-                description="定时自拍使用的绘图模型ID。对应本插件[models.xxx]配置节的模型。示例：model1、model2等",
-                placeholder="model1",
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=18,
-            ),
-            "selfie_style": ConfigField(
-                type=str,
-                default="standard",
-                description="自拍风格选择。standard=标准自拍（模拟前置摄像头，手机不出现在画面中）；mirror=对镜自拍（模拟对着镜子拍照，可能看到手机）",
-                choices=["standard", "mirror"],
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=19,
-            ),
-            # ==================== 8. 配文设置 ====================
-            "enable_narrative": ConfigField(
-                type=bool,
-                default=True,
-                description='是否启用叙事系统。开启后配文会根据当天日程生成连贯的"故事线"，让一天的自拍像是在记录生活',
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=20,
-            ),
-            "use_replyer_for_ask": ConfigField(
-                type=bool,
-                default=True,
-                description="是否使用LLM动态生成配文。开启后会调用LLM根据场景生成自然的配文；关闭则使用ask_message中的固定文案或随机模板",
-                depends_on="auto_selfie.enabled",
-                depends_value=True,
-                order=21,
-            ),
-            "ask_message": ConfigField(
-                type=str,
-                default="",
-                description="固定配文内容。仅当use_replyer_for_ask=false时生效。留空则从预设模板中随机选择",
-                placeholder="你看这张照片怎么样？",
-                depends_on="auto_selfie.use_replyer_for_ask",
-                depends_value=False,
-                order=22,
-            ),
-            "caption_model_id": ConfigField(
-                type=str,
-                default="",
-                description="【进阶配置】配文生成使用的LLM模型ID。留空则自动使用MaiBot的replyer模型。与schedule_generator_model相同，这是MaiBot主配置中的文本模型ID",
-                placeholder="留空使用默认",
-                depends_on="auto_selfie.enable_narrative",
-                depends_value=True,
-                order=23,
-            ),
-            "caption_types": ConfigField(
-                type=list,
-                default=["narrative", "ask", "share", "monologue", "none"],
-                description="【高级设置】启用的配文类型列表。narrative=叙事式（今天去了...）；ask=询问式（你看这个...怎么样？）；share=分享式（推荐这个...）；monologue=独白式（内心OS）；none=不加配文",
-                placeholder='["narrative", "ask", "share", "monologue", "none"]',
-                depends_on="auto_selfie.enable_narrative",
-                depends_value=True,
-                order=24,
-            ),
-            "caption_weights": ConfigField(
-                type=list,
-                default=[0.35, 0.25, 0.25, 0.10, 0.05],
-                description="【高级设置】各配文类型的权重。与caption_types一一对应。权重越高该类型配文出现概率越大。所有权重之和应为1.0",
-                placeholder="[0.35, 0.25, 0.25, 0.10, 0.05]",
-                depends_on="auto_selfie.enable_narrative",
-                depends_value=True,
-                order=25,
-            ),
-            # ==================== 9. Phase 4：配文贴图（视觉摘要） ====================
-            "enable_visual_summary": ConfigField(
-                type=bool,
-                default=True,
-                description="是否启用配文贴图（视觉摘要）。开启后会在图片生成后调用MaiBot的VLM模型生成1-2句图片内容摘要，并注入到配文生成提示词中，以提高配文与图片的一致性",
-                depends_on="auto_selfie.enable_narrative",
-                depends_value=True,
-                order=26,
-            ),
-            "enable_visual_consistency_check": ConfigField(
-                type=bool,
-                default=False,
-                description="是否启用视觉一致性自检。开启后会用文本LLM判断【计划场景】与【视觉摘要】是否明显冲突；若冲突则配文更偏向视觉摘要（默认关闭以节省调用）",
-                depends_on="auto_selfie.enable_visual_summary",
-                depends_value=True,
-                order=27,
-            ),
-            # ==================== 10. 配文人设注入 ====================
-            "caption_persona_enabled": ConfigField(
-                type=bool,
-                default=True,
-                description="是否启用配文人设注入。开启后LLM会根据caption_persona_text中的人设生成配文，让配文风格符合角色个性",
-                depends_on="auto_selfie.enable_narrative",
-                depends_value=True,
-                order=28,
-            ),
-            "caption_persona_text": ConfigField(
-                type=str,
-                default="是一个喜欢分享日常的女生",
-                description="配文人设描述。描述角色的身份和性格特点，LLM会据此调整配文的语气和内容。示例：是一个大二女大学生，有点小傲娇但其实很热心；是一个宅家程序员，说话直接但善良",
-                input_type="textarea",
-                rows=3,
-                placeholder="是一个大二女大学生，喜欢分享日常，有点小傲娇但其实很热心",
-                hint="描述角色的身份、性格特点，让配文更符合人设",
-                depends_on="auto_selfie.caption_persona_enabled",
-                depends_value=True,
-                order=29,
-            ),
-            "caption_reply_style": ConfigField(
-                type=str,
-                default="语气自然，符合年轻人社交风格",
-                description="配文表达风格指导。控制LLM生成配文时的语言风格。示例：俏皮可爱，喜欢用颜文字；正经认真，像在写日记；吐槽风格，经常自嘲",
-                input_type="textarea",
-                rows=2,
-                placeholder="俏皮可爱，偶尔吐槽，用语轻松自然",
-                hint="描述说话的语气、习惯，让配文风格更一致",
-                depends_on="auto_selfie.caption_persona_enabled",
-                depends_value=True,
-                order=30,
-            ),
         },
         "prompt_optimizer": {
             "enabled": ConfigField(
                 type=bool,
                 default=True,
-                description="是否启用提示词优化器。开启后会使用 MaiBot 主 LLM 将用户描述优化为专业英文提示词",
+                description="是否启用提示词优化器。开启后会使用 LLM 将用户描述优化为专业英文提示词（优先使用下方自定义API，未配置则使用 MaiBot 主 LLM）",
+                label="启用优化器",
                 order=1,
             ),
-            "hint": ConfigField(
-                type=str,
-                default="优化器会自动将中文描述翻译并优化为专业的英文绘画提示词，提升生成效果。关闭后将直接使用用户原始描述。",
-                description="功能说明",
-                disabled=True,
-                order=2,
-            ),
-        },
-        "search_reference": {
-            "hint": ConfigField(
-                type=str,
-                default="开启后，当用户提到冷门角色名时，插件会自动联网搜索该角色的参考图，并使用视觉AI提取特征（发色、服装等）合并到提示词中，尽量缓解绘图模型不认识角色的问题。注意：如果使用的绘图模型本身就能够联网或认识角色（如Gemini），则不必开启本功能。",
-                description="功能说明",
-                disabled=True,
-                order=0,
-            ),
-            "enabled": ConfigField(type=bool, default=False, description="是否启用智能参考搜索功能", order=1),
-            "vision_api_key": ConfigField(
+            "custom_api_base_url": ConfigField(
                 type=str,
                 default="",
-                description="用于识图的API Key。留空则使用MaiBot的vlm模型（视觉语言模型），填写后则使用下方自定义的vision_model配置",
-                input_type="password",
-                depends_on="search_reference.enabled",
+                description="自定义API地址（OpenAI兼容格式）。留空则使用 MaiBot 主 LLM。示例：https://api.deepseek.com/v1、https://api.siliconflow.cn/v1",
+                label="自定义API地址",
+                placeholder="https://api.deepseek.com/v1",
+                depends_on="prompt_optimizer.enabled",
                 depends_value=True,
                 order=2,
             ),
-            "vision_base_url": ConfigField(
+            "custom_api_key": ConfigField(
                 type=str,
-                default="https://api.openai.com/v1",
-                description="识图API地址（仅在vision_api_key不为空时生效）",
-                depends_on="search_reference.enabled",
+                default="",
+                description="自定义API密钥。直接填密钥即可（如 sk-xxx），系统会自动添加 Bearer 前缀。留空则使用 MaiBot 主 LLM",
+                label="自定义API密钥",
+                input_type="text",
+                placeholder="sk-xxx",
+                depends_on="prompt_optimizer.enabled",
                 depends_value=True,
                 order=3,
             ),
-            "vision_model": ConfigField(
+            "custom_api_model": ConfigField(
                 type=str,
-                default="gpt-4o",
-                description="视觉模型名称（仅在vision_api_key不为空时生效）",
-                depends_on="search_reference.enabled",
+                default="",
+                description="自定义模型名称。例如：deepseek-chat、gpt-4o-mini、Qwen/Qwen2.5-7B-Instruct。留空则使用 MaiBot 主 LLM",
+                label="自定义模型名称",
+                placeholder="deepseek-chat",
+                depends_on="prompt_optimizer.enabled",
                 depends_value=True,
                 order=4,
             ),
         },
-        "models": {
+        "search_reference": {
+            "enabled": ConfigField(
+                type=bool,
+                default=False,
+                description="是否启用角色参考图（提升角色一致性）。启用后可通过 /dr refresh <角色名> 下载参考图",
+                label="启用角色参考",
+                order=1,
+            ),
+            "character_only": ConfigField(
+                type=bool,
+                default=True,
+                description="仅在'画某角色'这类请求时触发特征注入（关闭则所有生图请求都会尝试匹配）",
+                label="仅角色请求触发",
+                order=2,
+            ),
+            "max_images_per_role": ConfigField(
+                type=int,
+                default=3,
+                description="每个角色最多保存几张参考图",
+                label="最大参考图数",
+                min=1,
+                max=10,
+                order=3,
+            ),
+            "search_top_k": ConfigField(
+                type=int,
+                default=6,
+                description="每次搜索候选图数量（越大越慢但命中率越高）",
+                label="搜索候选数",
+                min=3,
+                max=20,
+                order=4,
+            ),
+            "max_cache_size_mb": ConfigField(
+                type=int,
+                default=100,
+                description="参考图库总容量上限 MB（超出会自动清理旧数据）",
+                label="缓存上限 MB",
+                min=10,
+                max=1024,
+                order=5,
+            ),
+            "feature_boost_weight": ConfigField(
+                type=float,
+                default=1.25,
+                description="特征注入权重（越高越强调角色特征，1.0=不增强，2.0=最大增强）",
+                label="特征注入权重",
+                min=1.0,
+                max=2.0,
+                step=0.05,
+                order=6,
+            ),
+            "vision_prompt": ConfigField(
+                type=str,
+                default="请用中文详细描述这张图片中主要人物的特征是什么，纯粹描述即可。输出为一段平文本，总字数最多不超过120字。",
+                description="VLM 识图提示词（一般不需修改）",
+                label="识图提示词",
+                input_type="textarea",
+                rows=3,
+                order=7,
+            ),
             "hint": ConfigField(
                 type=str,
-                default="添加更多模型：编辑 config.toml，复制 [models.model1] 整节并改名为 model2、model3 等",
-                description="配置说明",
+                default="命令：/dr refresh <角色名>、/dr status <角色名>、/dr clear <角色名>",
+                description="使用提示",
                 disabled=True,
-                order=1,
-            )
+                order=8,
+            ),
         },
-        # 模型配置通过工厂函数动态生成，减少重复代码
-        **_generate_model_schemas(),
+        "schedule": {
+            # ========== 自动生成配置 ==========
+            "auto_generate_enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="每日自动生成日程（内置日程系统，无需外部插件）",
+                label="自动生成日程",
+                order=1,
+            ),
+            "auto_generate_time": ConfigField(
+                type=str,
+                default="06:30",
+                description="每日自动生成时间，格式 HH:MM",
+                label="生成时间",
+                placeholder="06:30",
+                order=2,
+            ),
+            "model_id": ConfigField(
+                type=str,
+                default="planner",
+                description="日程生成使用的麦麦 LLM 模型。可用值：utils（组件模型）、tool_use（工具调用模型）、replyer（首要回复模型）、planner（决策模型，推荐）、vlm（图像识别模型）",
+                label="日程模型",
+                placeholder="planner",
+                order=3,
+            ),
+            
+            # ========== 人设补充配置 ==========
+            # 这些配置用于补充主程序人设，让日程更贴合麦麦的性格
+            "schedule_identity": ConfigField(
+                type=str,
+                default="",
+                description="身份补充，用于让日程更贴合麦麦的身份设定。例如：'是一个二次元爱好者，喜欢画画'。会与主程序的人设配置合并使用",
+                label="身份补充",
+                placeholder="是一个二次元爱好者，喜欢画画",
+                order=10,
+            ),
+            "schedule_interest": ConfigField(
+                type=str,
+                default="",
+                description="兴趣爱好，用于让日程活动更符合麦麦的兴趣。例如：'画画、听音乐、打游戏、看番'。日程生成时会优先安排这些活动",
+                label="兴趣爱好",
+                placeholder="画画、听音乐、打游戏、看番",
+                order=11,
+            ),
+            "schedule_lifestyle": ConfigField(
+                type=str,
+                default="",
+                description="生活规律，用于让日程作息更符合麦麦的习惯。例如：'习惯晚睡，经常熬夜，早上起不来'。会影响日程的时间安排",
+                label="生活规律",
+                placeholder="习惯晚睡，经常熬夜",
+                order=12,
+            ),
+            
+            # ========== 历史记忆配置 ==========
+            # 让日程有连续性，昨天的日程会影响今天的安排
+            "schedule_history_days": ConfigField(
+                type=int,
+                default=1,
+                description="历史日程参考天数。1=仅参考昨天(默认)；2=参考前两天；0=不参考历史。参考历史可让日程有连续性，比如昨天在学Python，今天继续学",
+                label="历史参考天数",
+                min=0,
+                max=7,
+                order=20,
+            ),
+            "schedule_history_retention_days": ConfigField(
+                type=int,
+                default=-1,
+                description="历史日程保留天数。-1=永久保留(默认，数据量很小)；7=保留一周；30=保留一个月。超期的历史日程会被自动清理",
+                label="历史保留天数",
+                min=-1,
+                max=365,
+                order=21,
+            ),
+            
+            # ========== 自定义Prompt配置 ==========
+            "schedule_custom_prompt": ConfigField(
+                type=str,
+                default="",
+                description="自定义日程风格要求(可选)。例如：'日程安排要宽松一些'。注意：不能改变输出格式，只能追加风格要求。留空则使用默认风格",
+                label="日程风格要求",
+                placeholder="日程安排要宽松一些，多安排休息时间",
+                order=30,
+            ),
+            
+            # ========== 多轮生成配置 ==========
+            # 提升日程生成质量，避免空档、描述过短等问题
+            "schedule_multi_round": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用多轮生成优化。开启后如果生成的日程质量不达标会自动重试修复。建议开启，可以避免日程空档、描述过短等问题",
+                label="多轮生成优化",
+                order=40,
+            ),
+            "schedule_max_rounds": ConfigField(
+                type=int,
+                default=2,
+                description="最大重试轮数。当日程质量不达标时最多重试几次。建议2-3次，太多会消耗更多token",
+                label="最大重试轮数",
+                min=1,
+                max=5,
+                depends_on="schedule.schedule_multi_round",
+                depends_value=True,
+                order=41,
+            ),
+            "schedule_quality_threshold": ConfigField(
+                type=float,
+                default=0.8,
+                description="质量分数阈值(0.0-1.0)。生成的日程分数低于此阈值时会触发重试。建议0.75-0.85，太高可能导致频繁重试",
+                label="质量阈值",
+                min=0.5,
+                max=1.0,
+                depends_on="schedule.schedule_multi_round",
+                depends_value=True,
+                order=42,
+            ),
+        },
+        "schedule_inject": {
+            # ========== 基础注入配置 ==========
+            "enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否在 LLM 生成回复前注入麦麦当前日程信息",
+                label="启用日程注入",
+                order=1,
+            ),
+            "mode": ConfigField(
+                type=str,
+                default="smart",
+                description="注入模式。smart=智能节流（按时间/消息数触发），always=每次都注入",
+                label="注入模式",
+                placeholder="smart",
+                order=2,
+            ),
+            "min_messages": ConfigField(
+                type=int,
+                default=5,
+                description="smart 模式下，同一会话收到多少条消息后再次注入",
+                label="最小消息数",
+                depends_on="schedule_inject.enabled",
+                depends_value=True,
+                order=3,
+            ),
+            "min_seconds": ConfigField(
+                type=int,
+                default=300,
+                description="smart 模式下，距离上次注入多少秒后再次注入",
+                label="最小间隔（秒）",
+                depends_on="schedule_inject.enabled",
+                depends_value=True,
+                order=4,
+            ),
+            
+            # ========== 智能注入增强配置 ==========
+            # 这些配置用于让注入更智能，避免在不相关的问题上注入日程
+            "schedule_intent_enable": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用意图识别。开启后系统会识别用户意图，只在相关问题上注入日程。例如：技术问答时不注入，询问日程时注入。建议开启",
+                label="意图识别",
+                depends_on="schedule_inject.enabled",
+                depends_value=True,
+                order=10,
+            ),
+            "schedule_context_cache_ttl_minutes": ConfigField(
+                type=int,
+                default=30,
+                description="对话上下文缓存TTL(分钟)。用于记住最近的对话内容，让连续对话更自然。建议15-60分钟",
+                label="上下文缓存TTL",
+                min=5,
+                max=120,
+                depends_on="schedule_inject.enabled",
+                depends_value=True,
+                order=11,
+            ),
+            "schedule_context_cache_max_turns": ConfigField(
+                type=int,
+                default=10,
+                description="对话上下文最大轮数。缓存最近的N轮对话，用于连续对话理解。建议5-20轮",
+                label="上下文最大轮数",
+                min=1,
+                max=50,
+                depends_on="schedule_inject.enabled",
+                depends_value=True,
+                order=12,
+            ),
+        },
+        "auto_selfie": {
+            "enabled": ConfigField(
+                type=bool,
+                default=False,
+                description="是否启用自动自拍。日程数据由内置日程系统自动提供，发送到聊天流无需额外插件（若需发布到QQ空间，则需安装 Maizone 插件）",
+                label="启用自动自拍",
+                order=1,
+            ),
+            "interval_minutes": ConfigField(
+                type=int,
+                default=120,
+                description="自拍间隔（分钟）。建议 60-240 分钟，太频繁可能被限制",
+                label="自拍间隔",
+                min=10,
+                max=1440,
+                depends_on="auto_selfie.enabled",
+                depends_value=True,
+                order=2,
+            ),
+            "selfie_model": ConfigField(
+                type=str,
+                default="model1",
+                description="自拍使用的模型ID。对应模型管理中的配置（如 model1、model2）",
+                label="自拍模型",
+                placeholder="model1",
+                depends_on="auto_selfie.enabled",
+                depends_value=True,
+                order=3,
+            ),
+            "quiet_hours_start": ConfigField(
+                type=str,
+                default="00:00",
+                description="安静时段开始时间（HH:MM）。此时段内不发自拍，避免半夜打扰",
+                label="安静开始",
+                example="00:00",
+                placeholder="00:00",
+                depends_on="auto_selfie.enabled",
+                depends_value=True,
+                order=4,
+            ),
+            "quiet_hours_end": ConfigField(
+                type=str,
+                default="07:00",
+                description="安静时段结束时间（HH:MM）",
+                label="安静结束",
+                placeholder="07:00",
+                depends_on="auto_selfie.enabled",
+                depends_value=True,
+                order=5,
+            ),
+            "caption_enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否为自拍生成配文。开启后会用 LLM 根据日程生成文字描述",
+                label="生成配文",
+                depends_on="auto_selfie.enabled",
+                depends_value=True,
+                order=6,
+            ),
+            "send_to_qzone": ConfigField(
+                type=bool,
+                default=False,
+                description="是否将自动自拍发布到 QQ 空间说说。需要安装 Maizone 插件",
+                label="发送到QQ空间",
+                order=7,
+            ),
+            "send_to_chat": ConfigField(
+                type=bool,
+                default=False,
+                description="是否将自动自拍发送到指定群聊和私聊",
+                label="发送到群聊/私聊",
+                order=8,
+            ),
+            "target_groups": ConfigField(
+                type=list,
+                default=[],
+                description="目标群号列表（纯数字字符串）。每行一个群号，send_to_chat 开启时生效",
+                label="目标群号",
+                item_type="string",
+                placeholder="123456789",
+                hint="填群号，每行一个",
+                order=9,
+            ),
+            "target_users": ConfigField(
+                type=list,
+                default=[],
+                description="目标私聊QQ号列表（纯数字字符串）。每行一个QQ号，send_to_chat 开启时生效",
+                label="目标私聊QQ号",
+                item_type="string",
+                placeholder="987654321",
+                hint="填QQ号，每行一个",
+                order=10,
+            ),
+            "persist_state": ConfigField(
+                type=bool,
+                default=True,
+                description="是否持久化自拍状态。开启后重启不会立即自拍，而是等待剩余间隔",
+                label="持久化自拍状态",
+                depends_on="auto_selfie.enabled",
+                depends_value=True,
+                order=11,
+            ),
+        },
+        "models": {},
+        # 基础模型配置模板
+        "models.model1": {
+            "name": ConfigField(
+                type=str,
+                default="Tongyi-MAI/Z-Image-Turbo",
+                description="模型显示名称。在 /dr list 命令中显示，方便识别",
+                label="模型名称",
+                group="connection",
+                order=1,
+            ),
+            "base_url": ConfigField(
+                type=str,
+                default="https://api-inference.modelscope.cn/v1",
+                description="API服务地址。各平台地址不同：魔搭=https://api-inference.modelscope.cn/v1，硅基流动=https://api.siliconflow.cn/v1，豆包=https://ark.cn-beijing.volces.com/api/v3",
+                label="API地址",
+                required=True,
+                group="connection",
+                order=2,
+            ),
+            "api_key": ConfigField(
+                type=str,
+                default="Bearer YOUR_MODELSCOPE_TOKEN",
+                description="API密钥。统一填写 'Bearer xxx' 格式，部分平台会自动处理",
+                label="API密钥",
+                input_type="text",
+                required=True,
+                group="connection",
+                order=3,
+            ),
+            "format": ConfigField(
+                type=str,
+                default="modelscope",
+                description="API格式。不同平台接口不同：openai=通用格式，modelscope=魔搭，doubao=豆包，gemini=Gemini，shatangyun=砂糖云(NovelAI)，comfyui=本地ComfyUI",
+                label="API格式",
+                choices=[
+                    "openai",
+                    "openai-chat",
+                    "gemini",
+                    "doubao",
+                    "modelscope",
+                    "shatangyun",
+                    "mengyuai",
+                    "zai",
+                    "comfyui",
+                ],
+                required=True,
+                group="connection",
+                order=4,
+            ),
+            "model": ConfigField(
+                type=str,
+                default="Tongyi-MAI/Z-Image-Turbo",
+                description="模型标识。填模型ID或模型名称，如 cancel13/liaocao。ComfyUI格式填工作流文件名",
+                label="模型标识",
+                required=True,
+                group="connection",
+                order=5,
+            ),
+            "fixed_size_enabled": ConfigField(
+                type=bool,
+                default=False,
+                description="是否固定图片尺寸。开启后强制使用 default_size，关闭则由 LLM 自动选择合适尺寸",
+            ),
+            "default_size": ConfigField(
+                type=str,
+                default="1024x1024",
+                description="默认图片尺寸。格式：宽x高。常见值：1024x1024、512x768、768x512",
+                label="默认尺寸",
+                group="params",
+                order=7,
+            ),
+            "seed": ConfigField(
+                type=int,
+                default=-1,
+                description="随机种子。-1=每次随机；固定值（如 42）可复现相同结果",
+                label="随机种子",
+                min=-1,
+                max=2147483647,
+                group="params",
+                order=8,
+            ),
+            "guidance_scale": ConfigField(
+                type=float,
+                default=2.5,
+                description="引导强度（CFG）。控制AI'听话程度'。值越高越严格遵循提示词。推荐：魔搭/硅基流动 2.5-7.5",
+                label="引导强度",
+                min=0.0,
+                max=20.0,
+                step=0.5,
+                group="params",
+                order=9,
+            ),
+            "num_inference_steps": ConfigField(
+                type=int,
+                default=30,
+                description="推理步数。影响质量和速度。推荐 20-50，太少质量差，太多太慢",
+                label="推理步数",
+                min=1,
+                max=150,
+                group="params",
+                order=10,
+            ),
+            "watermark": ConfigField(
+                type=bool,
+                default=True,
+                description="是否添加水印。部分平台会自动添加",
+            ),
+            "custom_prompt_add": ConfigField(
+                type=str,
+                default="",
+                description="正面提示词增强。自动添加到用户描述后面，用于统一风格",
+                label="正面增强词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=12,
+            ),
+            "negative_prompt_add": ConfigField(
+                type=str,
+                default="low quality, worst quality, blurry, text, watermark",
+                description="负面提示词。避免生成不想要的内容（低质量、模糊、水印等）。豆包/Gemini 不支持此参数",
+                label="负面提示词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=13,
+            ),
+            "artist": ConfigField(
+                type=str,
+                default="",
+                description="艺术家风格标签。仅砂糖云格式生效，留空则不添加",
+                label="艺术家标签",
+                group="prompts",
+                order=14,
+            ),
+            "support_img2img": ConfigField(
+                type=bool,
+                default=True,
+                description="是否支持图生图。根据模型能力填写，不支持会自动降级为文生图",
+                label="支持图生图",
+                group="prompts",
+                order=15,
+            ),
+            "auto_recall_delay": ConfigField(
+                type=int,
+                default=0,
+                description="自动撤回延时（秒）。大于0时启用撤回，需先开启自动撤回总开关",
+                label="撤回延时",
+                min=0,
+                max=120,
+                group="prompts",
+                order=16,
+            ),
+            "cfg": ConfigField(
+                type=float,
+                default=0,
+                description="CFG Rescale 参数。仅砂糖云格式生效，一般填 0",
+                label="CFG Rescale",
+                hint="仅砂糖云格式生效",
+                min=0.0,
+                max=1.0,
+                step=0.1,
+                group="platform",
+                order=20,
+            ),
+            "sampler": ConfigField(
+                type=str,
+                default="k_euler_ancestral",
+                description="采样器名称。仅砂糖云格式生效。推荐 k_euler_ancestral",
+                label="采样器",
+                hint="仅砂糖云格式生效",
+                choices=[
+                    "k_euler_ancestral",
+                    "k_euler",
+                    "k_dpmpp_2s_ancestral",
+                    "k_dpmpp_2m_sde",
+                    "k_dpmpp_2m",
+                    "k_dpmpp_sde",
+                ],
+                group="platform",
+                order=21,
+            ),
+            "nocache": ConfigField(
+                type=int,
+                default=0,
+                description="是否禁用缓存。仅砂糖云格式生效。0=使用缓存，1=禁用",
+                label="禁用缓存",
+                hint="仅砂糖云格式生效",
+                min=0,
+                max=1,
+                group="platform",
+                order=22,
+            ),
+            "noise_schedule": ConfigField(
+                type=str,
+                default="karras",
+                description="噪声调度方案。仅砂糖云格式生效。推荐 karras",
+                label="噪声调度",
+                hint="仅砂糖云格式生效",
+                choices=["karras", "native", "exponential", "polyexponential"],
+                group="platform",
+                order=23,
+            ),
+        },
+        "models.model2": {
+            "name": ConfigField(
+                type=str,
+                default="QWQ114514123/WAI-illustrious-SDXL-v16",
+                description="模型显示名称",
+                label="模型名称",
+                group="connection",
+                order=1,
+            ),
+            "base_url": ConfigField(
+                type=str,
+                default="https://api-inference.modelscope.cn/v1",
+                description="API服务地址",
+                label="API地址",
+                required=True,
+                group="connection",
+                order=2,
+            ),
+            "api_key": ConfigField(
+                type=str,
+                default="Bearer YOUR_MODELSCOPE_TOKEN",
+                description="API密钥，格式：Bearer xxx",
+                label="API密钥",
+                input_type="text",
+                required=True,
+                group="connection",
+                order=3,
+            ),
+            "format": ConfigField(
+                type=str,
+                default="modelscope",
+                description="API格式",
+                label="API格式",
+                choices=[
+                    "openai",
+                    "openai-chat",
+                    "gemini",
+                    "doubao",
+                    "modelscope",
+                    "shatangyun",
+                    "mengyuai",
+                    "zai",
+                    "comfyui",
+                ],
+                required=True,
+                group="connection",
+                order=4,
+            ),
+            "model": ConfigField(
+                type=str,
+                default="QWQ114514123/WAI-illustrious-SDXL-v16",
+                description="模型标识",
+                label="模型标识",
+                required=True,
+                group="connection",
+                order=5,
+            ),
+            "fixed_size_enabled": ConfigField(
+                type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=6
+            ),
+            "default_size": ConfigField(
+                type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=7
+            ),
+            "seed": ConfigField(
+                type=int,
+                default=-1,
+                description="随机种子",
+                label="随机种子",
+                min=-1,
+                max=2147483647,
+                group="params",
+                order=8,
+            ),
+            "guidance_scale": ConfigField(
+                type=float,
+                default=2.5,
+                description="引导强度",
+                label="引导强度",
+                min=0.0,
+                max=20.0,
+                step=0.5,
+                group="params",
+                order=9,
+            ),
+            "num_inference_steps": ConfigField(
+                type=int, default=20, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
+            ),
+            "watermark": ConfigField(
+                type=bool, default=True, description="是否添加水印", label="水印", group="params", order=11
+            ),
+            "custom_prompt_add": ConfigField(
+                type=str,
+                default="",
+                description="正面提示词增强",
+                label="正面增强词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=12,
+            ),
+            "negative_prompt_add": ConfigField(
+                type=str,
+                default="low quality, worst quality, blurry, text, watermark",
+                description="负面提示词",
+                label="负面提示词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=13,
+            ),
+            "artist": ConfigField(
+                type=str,
+                default="",
+                description="艺术家风格标签（砂糖云专用）",
+                label="艺术家标签",
+                group="prompts",
+                order=14,
+            ),
+            "support_img2img": ConfigField(
+                type=bool, default=True, description="是否支持图生图", label="支持图生图", group="prompts", order=15
+            ),
+            "auto_recall_delay": ConfigField(
+                type=int,
+                default=0,
+                description="自动撤回延时（秒）",
+                label="撤回延时",
+                min=0,
+                max=120,
+                group="prompts",
+                order=16,
+            ),
+            "cfg": ConfigField(
+                type=float,
+                default=0,
+                description="CFG Rescale（仅砂糖云格式生效）",
+                label="CFG Rescale",
+                hint="仅砂糖云格式生效",
+                min=0.0,
+                max=1.0,
+                step=0.1,
+                group="platform",
+                order=20,
+            ),
+            "sampler": ConfigField(
+                type=str,
+                default="k_euler_ancestral",
+                description="采样器（仅砂糖云格式生效）",
+                label="采样器",
+                hint="仅砂糖云格式生效",
+                choices=[
+                    "k_euler_ancestral",
+                    "k_euler",
+                    "k_dpmpp_2s_ancestral",
+                    "k_dpmpp_2m_sde",
+                    "k_dpmpp_2m",
+                    "k_dpmpp_sde",
+                ],
+                group="platform",
+                order=21,
+            ),
+            "nocache": ConfigField(
+                type=int,
+                default=0,
+                description="是否禁用缓存（仅砂糖云格式生效）",
+                label="禁用缓存",
+                hint="仅砂糖云格式生效",
+                min=0,
+                max=1,
+                group="platform",
+                order=22,
+            ),
+            "noise_schedule": ConfigField(
+                type=str,
+                default="karras",
+                description="噪声调度方案（仅砂糖云格式生效）",
+                label="噪声调度",
+                hint="仅砂糖云格式生效",
+                choices=["karras", "native", "exponential", "polyexponential"],
+                group="platform",
+                order=23,
+            ),
+        },
+        "models.model3": {
+            "name": ConfigField(
+                type=str,
+                default="cancel13/liaocao",
+                description="模型显示名称",
+                label="模型名称",
+                group="connection",
+                order=1,
+            ),
+            "base_url": ConfigField(
+                type=str,
+                default="https://api-inference.modelscope.cn/v1",
+                description="API服务地址",
+                label="API地址",
+                required=True,
+                group="connection",
+                order=2,
+            ),
+            "api_key": ConfigField(
+                type=str,
+                default="Bearer YOUR_MODELSCOPE_TOKEN",
+                description="API密钥，格式：Bearer xxx",
+                label="API密钥",
+                input_type="text",
+                required=True,
+                group="connection",
+                order=3,
+            ),
+            "format": ConfigField(
+                type=str,
+                default="openai",
+                description="API格式",
+                label="API格式",
+                choices=[
+                    "openai",
+                    "openai-chat",
+                    "gemini",
+                    "doubao",
+                    "modelscope",
+                    "shatangyun",
+                    "mengyuai",
+                    "zai",
+                    "comfyui",
+                ],
+                required=True,
+                group="connection",
+                order=4,
+            ),
+            "model": ConfigField(
+                type=str,
+                default="cancel13/liaocao",
+                description="模型标识",
+                label="模型标识",
+                required=True,
+                group="connection",
+                order=5,
+            ),
+            "fixed_size_enabled": ConfigField(
+                type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=6
+            ),
+            "default_size": ConfigField(
+                type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=7
+            ),
+            "seed": ConfigField(
+                type=int,
+                default=-1,
+                description="随机种子",
+                label="随机种子",
+                min=-1,
+                max=2147483647,
+                group="params",
+                order=8,
+            ),
+            "guidance_scale": ConfigField(
+                type=float,
+                default=2.5,
+                description="引导强度",
+                label="引导强度",
+                min=0.0,
+                max=20.0,
+                step=0.5,
+                group="params",
+                order=9,
+            ),
+            "num_inference_steps": ConfigField(
+                type=int, default=20, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
+            ),
+            "watermark": ConfigField(
+                type=bool, default=True, description="是否添加水印", label="水印", group="params", order=11
+            ),
+            "custom_prompt_add": ConfigField(
+                type=str,
+                default=", Nordic picture book art style, minimalist flat design, liaocao",
+                description="正面提示词增强",
+                label="正面增强词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=12,
+            ),
+            "negative_prompt_add": ConfigField(
+                type=str,
+                default="Pornography,nudity,lowres, bad anatomy, bad hands, text, error",
+                description="负面提示词",
+                label="负面提示词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=13,
+            ),
+            "artist": ConfigField(
+                type=str,
+                default="",
+                description="艺术家风格标签（砂糖云专用）",
+                label="艺术家标签",
+                group="prompts",
+                order=14,
+            ),
+            "support_img2img": ConfigField(
+                type=bool, default=True, description="是否支持图生图", label="支持图生图", group="prompts", order=15
+            ),
+            "auto_recall_delay": ConfigField(
+                type=int,
+                default=0,
+                description="自动撤回延时（秒）",
+                label="撤回延时",
+                min=0,
+                max=120,
+                group="prompts",
+                order=16,
+            ),
+            "cfg": ConfigField(
+                type=float,
+                default=0,
+                description="CFG Rescale（仅砂糖云格式生效）",
+                label="CFG Rescale",
+                hint="仅砂糖云格式生效",
+                min=0.0,
+                max=1.0,
+                step=0.1,
+                group="platform",
+                order=20,
+            ),
+            "sampler": ConfigField(
+                type=str,
+                default="k_euler_ancestral",
+                description="采样器（仅砂糖云格式生效）",
+                label="采样器",
+                hint="仅砂糖云格式生效",
+                choices=[
+                    "k_euler_ancestral",
+                    "k_euler",
+                    "k_dpmpp_2s_ancestral",
+                    "k_dpmpp_2m_sde",
+                    "k_dpmpp_2m",
+                    "k_dpmpp_sde",
+                ],
+                group="platform",
+                order=21,
+            ),
+            "nocache": ConfigField(
+                type=int,
+                default=0,
+                description="是否禁用缓存（仅砂糖云格式生效）",
+                label="禁用缓存",
+                hint="仅砂糖云格式生效",
+                min=0,
+                max=1,
+                group="platform",
+                order=22,
+            ),
+            "noise_schedule": ConfigField(
+                type=str,
+                default="karras",
+                description="噪声调度方案（仅砂糖云格式生效）",
+                label="噪声调度",
+                hint="仅砂糖云格式生效",
+                choices=["karras", "native", "exponential", "polyexponential"],
+                group="platform",
+                order=23,
+            ),
+        },
+        "models.model4": {
+            "name": ConfigField(
+                type=str,
+                default="yuleai/Z-Image-Turbo-anime",
+                description="模型显示名称",
+                label="模型名称",
+                group="connection",
+                order=1,
+            ),
+            "base_url": ConfigField(
+                type=str,
+                default="https://api-inference.modelscope.cn/v1",
+                description="API服务地址",
+                label="API地址",
+                required=True,
+                group="connection",
+                order=2,
+            ),
+            "api_key": ConfigField(
+                type=str,
+                default="Bearer YOUR_MODELSCOPE_TOKEN",
+                description="API密钥，格式：Bearer xxx",
+                label="API密钥",
+                input_type="text",
+                required=True,
+                group="connection",
+                order=3,
+            ),
+            "format": ConfigField(
+                type=str,
+                default="modelscope",
+                description="API格式",
+                label="API格式",
+                choices=[
+                    "openai",
+                    "openai-chat",
+                    "gemini",
+                    "doubao",
+                    "modelscope",
+                    "shatangyun",
+                    "mengyuai",
+                    "zai",
+                    "comfyui",
+                ],
+                required=True,
+                group="connection",
+                order=4,
+            ),
+            "model": ConfigField(
+                type=str,
+                default="yuleai/Z-Image-Turbo-anime",
+                description="模型标识",
+                label="模型标识",
+                required=True,
+                group="connection",
+                order=5,
+            ),
+            "fixed_size_enabled": ConfigField(
+                type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=6
+            ),
+            "default_size": ConfigField(
+                type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=7
+            ),
+            "seed": ConfigField(
+                type=int,
+                default=-1,
+                description="随机种子",
+                label="随机种子",
+                min=-1,
+                max=2147483647,
+                group="params",
+                order=8,
+            ),
+            "guidance_scale": ConfigField(
+                type=float,
+                default=2.5,
+                description="引导强度",
+                label="引导强度",
+                min=0.0,
+                max=20.0,
+                step=0.5,
+                group="params",
+                order=9,
+            ),
+            "num_inference_steps": ConfigField(
+                type=int, default=20, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
+            ),
+            "watermark": ConfigField(
+                type=bool, default=True, description="是否添加水印", label="水印", group="params", order=11
+            ),
+            "custom_prompt_add": ConfigField(
+                type=str,
+                default="",
+                description="正面提示词增强",
+                label="正面增强词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=12,
+            ),
+            "negative_prompt_add": ConfigField(
+                type=str,
+                default="low quality, worst quality, blurry, text, watermark",
+                description="负面提示词",
+                label="负面提示词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=13,
+            ),
+            "artist": ConfigField(
+                type=str,
+                default="",
+                description="艺术家风格标签（砂糖云专用）",
+                label="艺术家标签",
+                group="prompts",
+                order=14,
+            ),
+            "support_img2img": ConfigField(
+                type=bool, default=True, description="是否支持图生图", label="支持图生图", group="prompts", order=15
+            ),
+            "auto_recall_delay": ConfigField(
+                type=int,
+                default=0,
+                description="自动撤回延时（秒）",
+                label="撤回延时",
+                min=0,
+                max=120,
+                group="prompts",
+                order=16,
+            ),
+            "cfg": ConfigField(
+                type=float,
+                default=0,
+                description="CFG Rescale（仅砂糖云格式生效）",
+                label="CFG Rescale",
+                hint="仅砂糖云格式生效",
+                min=0.0,
+                max=1.0,
+                step=0.1,
+                group="platform",
+                order=20,
+            ),
+            "sampler": ConfigField(
+                type=str,
+                default="k_euler_ancestral",
+                description="采样器（仅砂糖云格式生效）",
+                label="采样器",
+                hint="仅砂糖云格式生效",
+                choices=[
+                    "k_euler_ancestral",
+                    "k_euler",
+                    "k_dpmpp_2s_ancestral",
+                    "k_dpmpp_2m_sde",
+                    "k_dpmpp_2m",
+                    "k_dpmpp_sde",
+                ],
+                group="platform",
+                order=21,
+            ),
+            "nocache": ConfigField(
+                type=int,
+                default=0,
+                description="是否禁用缓存（仅砂糖云格式生效）",
+                label="禁用缓存",
+                hint="仅砂糖云格式生效",
+                min=0,
+                max=1,
+                group="platform",
+                order=22,
+            ),
+            "noise_schedule": ConfigField(
+                type=str,
+                default="karras",
+                description="噪声调度方案（仅砂糖云格式生效）",
+                label="噪声调度",
+                hint="仅砂糖云格式生效",
+                choices=["karras", "native", "exponential", "polyexponential"],
+                group="platform",
+                order=23,
+            ),
+        },
+        "models.model5": {
+            "name": ConfigField(
+                type=str,
+                default="Sawata/Qwen-image-2512-Anime",
+                description="模型显示名称",
+                label="模型名称",
+                group="connection",
+                order=1,
+            ),
+            "base_url": ConfigField(
+                type=str,
+                default="https://api-inference.modelscope.cn/v1",
+                description="API服务地址",
+                label="API地址",
+                required=True,
+                group="connection",
+                order=2,
+            ),
+            "api_key": ConfigField(
+                type=str,
+                default="Bearer YOUR_MODELSCOPE_TOKEN",
+                description="API密钥，格式：Bearer xxx",
+                label="API密钥",
+                input_type="text",
+                required=True,
+                group="connection",
+                order=3,
+            ),
+            "format": ConfigField(
+                type=str,
+                default="modelscope",
+                description="API格式",
+                label="API格式",
+                choices=[
+                    "openai",
+                    "openai-chat",
+                    "gemini",
+                    "doubao",
+                    "modelscope",
+                    "shatangyun",
+                    "mengyuai",
+                    "zai",
+                    "comfyui",
+                ],
+                required=True,
+                group="connection",
+                order=4,
+            ),
+            "model": ConfigField(
+                type=str,
+                default="Sawata/Qwen-image-2512-Anime",
+                description="模型标识",
+                label="模型标识",
+                required=True,
+                group="connection",
+                order=5,
+            ),
+            "fixed_size_enabled": ConfigField(
+                type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=6
+            ),
+            "default_size": ConfigField(
+                type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=7
+            ),
+            "seed": ConfigField(
+                type=int,
+                default=-1,
+                description="随机种子",
+                label="随机种子",
+                min=-1,
+                max=2147483647,
+                group="params",
+                order=8,
+            ),
+            "guidance_scale": ConfigField(
+                type=float,
+                default=2.5,
+                description="引导强度",
+                label="引导强度",
+                min=0.0,
+                max=20.0,
+                step=0.5,
+                group="params",
+                order=9,
+            ),
+            "num_inference_steps": ConfigField(
+                type=int, default=20, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
+            ),
+            "watermark": ConfigField(
+                type=bool, default=True, description="是否添加水印", label="水印", group="params", order=11
+            ),
+            "custom_prompt_add": ConfigField(
+                type=str,
+                default="",
+                description="正面提示词增强",
+                label="正面增强词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=12,
+            ),
+            "negative_prompt_add": ConfigField(
+                type=str,
+                default="low quality, worst quality, blurry, text, watermark",
+                description="负面提示词",
+                label="负面提示词",
+                input_type="textarea",
+                rows=2,
+                group="prompts",
+                order=13,
+            ),
+            "artist": ConfigField(
+                type=str,
+                default="",
+                description="艺术家风格标签（砂糖云专用）",
+                label="艺术家标签",
+                group="prompts",
+                order=14,
+            ),
+            "support_img2img": ConfigField(
+                type=bool, default=True, description="是否支持图生图", label="支持图生图", group="prompts", order=15
+            ),
+            "auto_recall_delay": ConfigField(
+                type=int,
+                default=0,
+                description="自动撤回延时（秒）",
+                label="撤回延时",
+                min=0,
+                max=120,
+                group="prompts",
+                order=16,
+            ),
+            "cfg": ConfigField(
+                type=float,
+                default=0,
+                description="CFG Rescale（仅砂糖云格式生效）",
+                label="CFG Rescale",
+                hint="仅砂糖云格式生效",
+                min=0.0,
+                max=1.0,
+                step=0.1,
+                group="platform",
+                order=20,
+            ),
+            "sampler": ConfigField(
+                type=str,
+                default="k_euler_ancestral",
+                description="采样器（仅砂糖云格式生效）",
+                label="采样器",
+                hint="仅砂糖云格式生效",
+                choices=[
+                    "k_euler_ancestral",
+                    "k_euler",
+                    "k_dpmpp_2s_ancestral",
+                    "k_dpmpp_2m_sde",
+                    "k_dpmpp_2m",
+                    "k_dpmpp_sde",
+                ],
+                group="platform",
+                order=21,
+            ),
+            "nocache": ConfigField(
+                type=int,
+                default=0,
+                description="是否禁用缓存（仅砂糖云格式生效）",
+                label="禁用缓存",
+                hint="仅砂糖云格式生效",
+                min=0,
+                max=1,
+                group="platform",
+                order=22,
+            ),
+            "noise_schedule": ConfigField(
+                type=str,
+                default="karras",
+                description="噪声调度方案（仅砂糖云格式生效）",
+                label="噪声调度",
+                hint="仅砂糖云格式生效",
+                choices=["karras", "native", "exponential", "polyexponential"],
+                group="platform",
+                order=23,
+            ),
+        },
     }
 
-    _MODEL_ID_RE = re.compile(r"^model(?P<num>\d+)$", re.IGNORECASE)
-    _DEFAULT_MODEL_IDS = [f"model{i}" for i in range(1, 8)]
+    # ---- 模型字段模板（用于动态注入） ----
+    # 这是一个类级别的「字段工厂」，_inject_dynamic_config_layout 会用它来为新模型克隆字段
+    _MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
+        "name": {
+            "type": str,
+            "default": "新模型",
+            "group": "connection",
+            "order": 1,
+            "label": "模型名称",
+            "description": "模型的显示名称",
+        },
+        "base_url": {
+            "type": str,
+            "default": "https://api-inference.modelscope.cn/v1",
+            "required": True,
+            "group": "connection",
+            "order": 2,
+            "label": "API 地址",
+            "description": "推理 API 的 Base URL",
+        },
+        "api_key": {
+            "type": str,
+            "default": "Bearer xxxxxx",
+            "input_type": "text",
+            "required": True,
+            "group": "connection",
+            "order": 3,
+            "label": "API Key",
+            "description": "API 鉴权密钥，Bearer token 格式",
+        },
+        "format": {
+            "type": str,
+            "default": "openai",
+            "choices": [
+                "openai",
+                "openai-chat",
+                "gemini",
+                "doubao",
+                "modelscope",
+                "shatangyun",
+                "mengyuai",
+                "zai",
+                "comfyui",
+            ],
+            "required": True,
+            "group": "connection",
+            "order": 4,
+            "label": "接口格式",
+            "description": "API 接口类型/格式",
+        },
+        "model": {
+            "type": str,
+            "default": "",
+            "required": True,
+            "group": "connection",
+            "order": 5,
+            "label": "模型 ID",
+            "description": "模型名称或 ID，如 cancel13/liaocao",
+        },
+        "fixed_size_enabled": {
+            "type": bool,
+            "default": False,
+            "group": "params",
+            "order": 6,
+            "label": "固定尺寸",
+            "description": "是否强制使用 default_size 指定的固定分辨率",
+        },
+        "default_size": {
+            "type": str,
+            "default": "1024x1024",
+            "group": "params",
+            "order": 7,
+            "label": "默认尺寸",
+            "description": "图片默认分辨率，格式为 宽x高",
+        },
+        "seed": {
+            "type": int,
+            "default": -1,
+            "min": -1,
+            "max": 2147483647,
+            "group": "params",
+            "order": 8,
+            "label": "随机种子",
+            "description": "生成种子，-1 为随机",
+        },
+        "guidance_scale": {
+            "type": float,
+            "default": 2.5,
+            "min": 0.0,
+            "max": 20.0,
+            "step": 0.5,
+            "group": "params",
+            "order": 9,
+            "label": "引导强度",
+            "description": "提示词引导强度（CFG Scale）",
+        },
+        "num_inference_steps": {
+            "type": int,
+            "default": 20,
+            "min": 1,
+            "max": 150,
+            "group": "params",
+            "order": 10,
+            "label": "推理步数",
+            "description": "扩散推理步数，越高越精细但越慢",
+        },
+        "watermark": {
+            "type": bool,
+            "default": True,
+            "group": "params",
+            "order": 11,
+            "label": "水印",
+            "description": "是否为生成图片加水印",
+        },
+        "custom_prompt_add": {
+            "type": str,
+            "default": "",
+            "input_type": "textarea",
+            "rows": 2,
+            "group": "prompts",
+            "order": 12,
+            "label": "正面增强词",
+            "description": "正面提示词增强，自动添加到用户描述后",
+        },
+        "negative_prompt_add": {
+            "type": str,
+            "default": "Pornography,nudity,lowres, bad anatomy, bad hands, text, error",
+            "input_type": "textarea",
+            "rows": 2,
+            "group": "prompts",
+            "order": 13,
+            "label": "负面提示词",
+            "description": "负面提示词，避免不良内容。豆包/Gemini 格式不支持此参数可留空",
+        },
+        "artist": {
+            "type": str,
+            "default": "",
+            "group": "prompts",
+            "order": 14,
+            "label": "艺术家标签",
+            "description": "艺术家风格标签（砂糖云专用）。留空则不添加",
+        },
+        "support_img2img": {
+            "type": bool,
+            "default": True,
+            "group": "prompts",
+            "order": 15,
+            "label": "支持图生图",
+            "description": "该模型是否支持图生图功能。设为false时会自动降级为文生图",
+        },
+        "auto_recall_delay": {
+            "type": int,
+            "default": 0,
+            "min": 0,
+            "max": 120,
+            "hint": "需先在「自动撤回配置」中开启总开关",
+            "group": "prompts",
+            "order": 16,
+            "label": "撤回延时",
+            "description": "自动撤回延时（秒）。大于0时启用撤回，0表示不撤回",
+        },
+        "cfg": {
+            "type": float,
+            "default": 0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.1,
+            "hint": "仅砂糖云格式生效",
+            "group": "platform",
+            "order": 20,
+            "label": "CFG Rescale",
+            "description": "砂糖云专用：CFG Rescale 参数",
+        },
+        "sampler": {
+            "type": str,
+            "default": "k_euler_ancestral",
+            "choices": [
+                "k_euler_ancestral",
+                "k_euler",
+                "k_dpmpp_2s_ancestral",
+                "k_dpmpp_2m_sde",
+                "k_dpmpp_2m",
+                "k_dpmpp_sde",
+            ],
+            "hint": "仅砂糖云格式生效",
+            "group": "platform",
+            "order": 21,
+            "label": "采样器",
+            "description": "砂糖云专用：采样器名称",
+        },
+        "nocache": {
+            "type": int,
+            "default": 0,
+            "min": 0,
+            "max": 1,
+            "hint": "仅砂糖云格式生效",
+            "group": "platform",
+            "order": 22,
+            "label": "禁用缓存",
+            "description": "砂糖云专用：是否禁用缓存，0=使用缓存，1=禁用",
+        },
+        "noise_schedule": {
+            "type": str,
+            "default": "karras",
+            "choices": ["karras", "native", "exponential", "polyexponential"],
+            "hint": "仅砂糖云格式生效",
+            "group": "platform",
+            "order": 23,
+            "label": "噪声调度",
+            "description": "砂糖云专用：噪声调度方案",
+        },
+    }
+
+    def _inject_dynamic_config_layout(self, raw_config: dict[str, Any] | None) -> None:
+        """
+        根据 config.toml 里的实际内容，动态更新 WEBUI 布局。
+
+        这个方法会做三件事：
+        1. 找出 config.toml 里所有 [models.xxx] 节的 key
+        2. 为每个模型生成对应的 config_schema 字段、config_section_descriptions 元数据
+           和 config_layout 里 models 标签页的 sections 列表
+        3. 对 styles / style_aliases 也做同样的动态读取，
+           确保 WEBUI 能显示用户在 toml 里自定义的风格
+        4. 动态注入 wardrobe.outfits.<outfit_id>，让 WebUI 能编辑每套穿搭
+
+        注意：修改的是实例属性，会覆盖类属性，不影响其他实例。
+        调用时机：super().__init__() 之前，确保 WEBUI 读 self.config_schema 时已是最新版本。
+        """
+        import copy
+
+        # BasePlugin / PluginBase 在类型标注里把部分配置项定义成 @property。
+        # 但本插件需要在 super().__init__() 之前动态覆写这些“实例属性”，让 WebUI
+        # 能读取到最新的 schema/layout。
+        # 这里用 Any 规避静态类型检查对 property setter 的误报（不影响运行时）。
+        self_any: Any = self
+
+        def _safe_float(value: Any, default: float) -> float:
+            """把 value 尽量转成 float；失败则回退 default。"""
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        def _safe_str_list(value: Any) -> list[str]:
+            """把 value 尽量转成 list[str]；非 list 则返回空列表。"""
+            if not isinstance(value, list):
+                return []
+            return [str(x) for x in value]
+
+        # ── 1. 深拷贝类属性，变成实例属性（避免修改影响类本身）──
+        self_any.config_schema = copy.deepcopy(type(self).config_schema)
+        self_any.config_section_descriptions = copy.deepcopy(type(self).config_section_descriptions)
+        # config_layout 内部有 tabs 列表，需要深拷贝
+        self_any.config_layout = copy.deepcopy(type(self).config_layout)
+
+        # ── 2. 收集 config.toml 里实际存在的模型 key ──
+        model_keys: list[str] = []  # 例如 ["model1", "model2", "model3"]
+        model_names: dict[str, str] = {}  # key -> name，用于 Section 标题
+        if raw_config and isinstance(raw_config.get("models"), dict):
+            for key, val in raw_config["models"].items():
+                if isinstance(val, dict):  # 过滤掉非节的标量值
+                    model_keys.append(key)
+                    model_names[key] = val.get("name", key)  # 没有 name 就用 key
+
+        # 如果 config.toml 不存在或为空，至少保证 model1 存在（兜底）
+        if not model_keys:
+            model_keys = ["model1"]
+            model_names["model1"] = "模型1"
+
+        # ── 2.5 动态收集 wardrobe.outfits ──
+        # 目标：
+        # - config.toml 存在时：以用户实际写入的 [wardrobe.outfits.<id>] 为准
+        # - config.toml 不存在/缺少 outfits 时：不注入默认服装，保持 WebUI 干净
+        #   用户需要手动在 config.toml 中添加 [wardrobe.outfits.<id>] 才会显示对应小板块
+        default_outfits: dict[str, dict[str, Any]] = {}
+
+        outfit_keys: list[str] = []
+        outfit_data_map: dict[str, dict[str, Any]] = {}
+        if raw_config and isinstance(raw_config.get("wardrobe"), dict):
+            wardrobe_cfg = raw_config.get("wardrobe", {})
+            outfits_cfg = wardrobe_cfg.get("outfits")
+            if isinstance(outfits_cfg, dict):
+                for outfit_id, outfit_val in outfits_cfg.items():
+                    if isinstance(outfit_val, dict):
+                        outfit_keys.append(str(outfit_id))
+                        outfit_data_map[str(outfit_id)] = outfit_val
+
+        if not outfit_keys:
+            # 不再注入默认服装：如果 config.toml 中没有 [wardrobe.outfits] 配置，则保持空列表
+            # 用户需要手动在 config.toml 中添加服装配置才会显示对应的 WebUI 小板块
+            outfit_keys = []
+            outfit_data_map = {}
+
+        # ── 3. 动态注入每个模型的 config_schema / config_section_descriptions ──
+        base_order = 13  # models.model1 的 order 是 13，后续模型依次递增
+        for idx, key in enumerate(model_keys):
+            section_key = f"models.{key}"
+            display_name = model_names.get(key, key)
+
+            # 3a. 注入 config_section_descriptions（Section 元数据）
+            self_any.config_section_descriptions[section_key] = ConfigSection(
+                title=display_name,  # 用模型 name 字段作为标题
+                icon="box",
+                order=base_order + idx,
+            )
+
+            # 3b. 注入 config_schema（字段定义）
+            # 如果已经有这个节（比如 model1 已在类属性里），跳过，不覆盖已精心定制的字段
+            if section_key not in self_any.config_schema:
+                # 从模板构造 ConfigField 字典
+                fields: Dict[str, ConfigField] = {}
+                for field_name, spec in self._MODEL_FIELD_TEMPLATE.items():
+                    spec_copy = dict(spec)  # 浅拷贝，避免修改模板
+                    # 用 toml 里的实际值作为默认值（如果有）
+                    if raw_config and isinstance(raw_config.get("models"), dict):
+                        model_data = raw_config["models"].get(key, {})
+                        if field_name in model_data:
+                            spec_copy["default"] = model_data[field_name]
+                    # 重新构造，把所有支持的参数传进去
+                    field_kwargs: Dict[str, Any] = {"type": spec_copy["type"], "default": spec_copy["default"]}
+                    for extra_key in (
+                        "label",
+                        "description",
+                        "hint",
+                        "input_type",
+                        "rows",
+                        "choices",
+                        "placeholder",
+                        "min",
+                        "max",
+                        "step",
+                        "group",
+                        "order",
+                        "required",
+                        "disabled",
+                    ):
+                        if extra_key in spec_copy:
+                            field_kwargs[extra_key] = spec_copy[extra_key]
+                    fields[field_name] = ConfigField(**field_kwargs)
+                self_any.config_schema[section_key] = fields
+            else:
+                # model1-5（或已存在的节）已在类属性里定义好了，
+                # 用 config.toml 里的实际值覆盖 ConfigField.default，
+                # 否则 WebUI 会显示类属性里的硬编码模板默认值而非用户实际配置
+                if raw_config and isinstance(raw_config.get("models"), dict):
+                    model_data = raw_config["models"].get(key, {})
+                    if isinstance(model_data, dict):
+                        existing_fields = self_any.config_schema[section_key]
+                        if isinstance(existing_fields, dict):
+                            for field_name, field_obj in existing_fields.items():
+                                if isinstance(field_obj, ConfigField) and field_name in model_data:
+                                    field_obj.default = model_data[field_name]
+
+        # ── 4. 更新 config_layout 里 models 标签页的 sections ──
+        # 找到 id="models" 的 tab，重写其 sections 列表
+        for tab in self_any.config_layout.tabs:
+            if tab.id == "models":
+                tab.sections = ["models"] + [f"models.{k}" for k in model_keys]
+                break
+
+        # ── 4.5 更新 config_layout 里 features 标签页的 sections（插入 wardrobe + outfits）──
+        for tab in self_any.config_layout.tabs:
+            if tab.id == "features":
+                # 去掉上一次注入的动态节，避免重复
+                base_sections = [
+                    s for s in list(tab.sections) if s != "wardrobe" and not str(s).startswith("wardrobe.outfits.")
+                ]
+                insert_at = base_sections.index("selfie") + 1 if "selfie" in base_sections else 0
+                dynamic_sections = ["wardrobe"] + [f"wardrobe.outfits.{k}" for k in outfit_keys]
+                tab.sections = base_sections[:insert_at] + dynamic_sections + base_sections[insert_at:]
+                break
+
+        # ── 4.6 注入 wardrobe.outfits.<id> 的 config_schema / config_section_descriptions ──
+        wardrobe_section_base_order = 50
+        for idx, outfit_id in enumerate(outfit_keys):
+            section_key = f"wardrobe.outfits.{outfit_id}"
+            raw_outfit = outfit_data_map.get(outfit_id, {})
+
+            outfit_display_name = raw_outfit.get("name", outfit_id)
+            if not isinstance(outfit_display_name, str) or not outfit_display_name.strip():
+                outfit_display_name = outfit_id
+
+            self_any.config_section_descriptions[section_key] = ConfigSection(
+                title=str(outfit_display_name),
+                description="配置一套穿搭（仅服装标签）。prompt 建议用英文逗号分隔，例如：hoodie, jeans, sneakers",
+                icon="shirt",
+                order=wardrobe_section_base_order + idx,
+            )
+
+            # 构造字段默认值：先用内置默认，再用 config.toml 覆盖（如果有）
+            merged_defaults: dict[str, Any] = {}
+            if outfit_id in default_outfits:
+                merged_defaults.update(default_outfits[outfit_id])
+            if isinstance(raw_outfit, dict):
+                merged_defaults.update(raw_outfit)
+
+            self_any.config_schema[section_key] = {
+                "enabled": ConfigField(
+                    type=bool,
+                    default=bool(merged_defaults.get("enabled", True)),
+                    description="是否启用该穿搭",
+                    label="启用",
+                    order=1,
+                ),
+                "name": ConfigField(
+                    type=str,
+                    default=str(merged_defaults.get("name", outfit_id)),
+                    description="穿搭显示名称（用于 WebUI 列表/标题）",
+                    label="名称",
+                    placeholder="日常休闲",
+                    order=2,
+                ),
+                "prompt": ConfigField(
+                    type=str,
+                    default=str(merged_defaults.get("prompt", "")),
+                    description="穿搭提示词（只写衣服/饰品等标签；英文逗号分隔；不要写人物/场景/动作）",
+                    label="穿搭标签",
+                    input_type="textarea",
+                    rows=4,
+                    placeholder="hoodie, jeans, sneakers",
+                    order=3,
+                ),
+                "base_weight": ConfigField(
+                    type=float,
+                    default=_safe_float(merged_defaults.get("base_weight"), 0.0),
+                    description="基础权重：在没有临时覆盖时，该穿搭被选中的倾向（0=几乎不会选）",
+                    label="基础权重",
+                    min=0.0,
+                    step=0.1,
+                    order=4,
+                ),
+                "override_weight": ConfigField(
+                    type=float,
+                    default=_safe_float(merged_defaults.get("override_weight"), 0.0),
+                    description="覆盖权重：在“临时覆盖”生效时，该穿搭被选中的倾向（0=几乎不会选）",
+                    label="覆盖权重",
+                    min=0.0,
+                    step=0.1,
+                    order=5,
+                ),
+                "allowed_activity_types": ConfigField(
+                    type=list,
+                    default=_safe_str_list(merged_defaults.get("allowed_activity_types")),
+                    description="允许的活动类型列表（留空表示不限制）。例如：['sleeping', 'exercising']",
+                    label="允许活动类型",
+                    item_type="string",
+                    placeholder="sleeping",
+                    order=6,
+                ),
+                "forbidden_activity_types": ConfigField(
+                    type=list,
+                    default=_safe_str_list(merged_defaults.get("forbidden_activity_types")),
+                    description="禁止的活动类型列表（留空表示不禁止）。如果同时命中允许/禁止，以禁止为准",
+                    label="禁止活动类型",
+                    item_type="string",
+                    placeholder="work",
+                    order=7,
+                ),
+            }
+
+        # ── 5. 动态读取 styles / style_aliases，更新 config_schema ──
+        # styles：每个风格 key 对应一个 ConfigField（textarea 输入提示词）
+        if raw_config and isinstance(raw_config.get("styles"), dict):
+            styles_schema: Dict[str, ConfigField] = {}
+            for idx, (style_key, style_val) in enumerate(raw_config["styles"].items()):
+                styles_schema[style_key] = ConfigField(
+                    type=str,
+                    default=style_val if isinstance(style_val, str) else "",
+                    description=f"{style_key} 风格的提示词",
+                    label=style_key,
+                    input_type="textarea",
+                    rows=3,
+                    order=idx + 1,
+                )
+            if styles_schema:
+                self_any.config_schema["styles"] = styles_schema
+
+        # style_aliases：每个别名 key 对应一个 ConfigField（普通文本输入）
+        if raw_config and isinstance(raw_config.get("style_aliases"), dict):
+            aliases_schema: Dict[str, ConfigField] = {}
+            for idx, (alias_key, alias_val) in enumerate(raw_config["style_aliases"].items()):
+                aliases_schema[alias_key] = ConfigField(
+                    type=str,
+                    default=alias_val if isinstance(alias_val, str) else alias_key,
+                    description=f"{alias_key} 风格的中文别名，支持多别名用逗号分隔",
+                    label=f"{alias_key} 别名",
+                    placeholder="别名1,别名2",
+                    order=idx + 1,
+                )
+            if aliases_schema:
+                self_any.config_schema["style_aliases"] = aliases_schema
+
+        logger.info(
+            "WEBUI 动态布局注入完成：%s 个模型 %s，%s 套穿搭，%s 个风格",
+            len(model_keys),
+            model_keys,
+            len(outfit_keys),
+            len(raw_config.get("styles", {})) if raw_config else 0,
+        )
 
     def __init__(self, plugin_dir: str):
-        """初始化插件，集成增强配置管理器"""
-        import toml
-
-        # 在父类初始化前读取原始配置文件
+        """初始化插件"""
+        # 在父类初始化前读取原始配置文件，用于动态构建 WebUI 模型/风格布局
         config_path = os.path.join(plugin_dir, self.config_file_name)
-        original_config = None
+        original_config: Optional[Dict[str, Any]] = None
         if os.path.exists(config_path):
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    original_config = toml.load(f)
-                print(f"[CustomPicPlugin] 读取原始配置文件: {config_path}")
-            except Exception as e:
-                print(f"[CustomPicPlugin] 读取原始配置失败: {e}")
+            if tomllib is None:
+                logger.warning("当前 Python 环境不支持 tomllib，跳过预读取配置：%s", config_path)
+            else:
+                try:
+                    with open(config_path, "rb") as f:
+                        original_config = tomllib.load(f)
+                    logger.debug("预读取原始配置文件成功: %s", config_path)
+                except (OSError, _TOMLDecodeError) as exc:
+                    logger.warning("预读取原始配置失败，将使用默认布局: %s", exc)
+
+        # ── 动态注入：根据 config.toml 里的实际模型/风格，更新 WEBUI 布局 ──
+        self._inject_dynamic_config_layout(original_config)
 
         # 先调用父类初始化，这会加载配置并可能触发 MaiBot 迁移
         super().__init__(plugin_dir)
 
-        # 初始化增强配置管理器
-        self.enhanced_config_manager = EnhancedConfigManager(plugin_dir, self.config_file_name)
+        # 初始化自动自拍任务
+        self._auto_selfie_task = None
+        self._auto_selfie_pending = False
+        if self.get_config("auto_selfie.enabled", False):
+            from .core.selfie import AutoSelfieTask
 
-        # 注入插件实例到 Command 类，以便 Command 可以访问配置管理器保存配置
-        PicConfigCommand.plugin_instance = self
+            self._auto_selfie_task = AutoSelfieTask(self)
+            try:
+                asyncio.create_task(self._start_auto_selfie_after_delay())
+            except RuntimeError:
+                # 事件循环未就绪，标记待启动，在首次组件执行时懒启动
+                self._auto_selfie_pending = True
+                logger.info("事件循环未就绪，自动自拍任务将在首次执行时懒启动")
 
-        # === 自动迁移：修正旧配置里的插件内部ID（仅当检测到旧值时）===
-        # 背景：历史版本用的是 custom_pic_plugin 作为 plugin_name & 默认配置 name。
-        # 现在插件内部ID改为 selfie_painter，但用户 config.toml 需要平滑迁移。
+        # --- 日程管理器初始化 ---
+        self._schedule_gen_task: Optional[asyncio.Task] = None
+        self._schedule_pending = False
         try:
-            cfg = self.enhanced_config_manager.load_config()
-            old_id = None
-            if isinstance(cfg, dict):
-                old_id = cfg.get("plugin", {}).get("name") if isinstance(cfg.get("plugin"), dict) else None
+            asyncio.create_task(self._start_schedule_gen_after_delay())
+        except RuntimeError:
+            self._schedule_pending = True
 
-            if old_id in ("custom_pic_plugin", "nguspring_custom_pic_plugin"):
-                print(
-                    f"[selfie_painter] 检测到旧配置 plugin.name={old_id!r}，将自动迁移为 'selfie_painter' 并写回 config.toml"
-                )
-                cfg.setdefault("plugin", {})
-                cfg["plugin"]["name"] = "selfie_painter"
-                # 尽量保留注释：用带注释写回
-                schema_for_manager = self._convert_schema_for_manager()
-                self.enhanced_config_manager.save_config_with_comments(cfg, schema_for_manager)
-                # 同步内存配置
-                self.config = cfg
+    async def _start_auto_selfie_after_delay(self):
+        """延迟启动自动自拍任务"""
+        await asyncio.sleep(15)
+        if self._auto_selfie_task:
+            await self._auto_selfie_task.start()
+            self._auto_selfie_pending = False
+
+    def try_start_auto_selfie(self):
+        """尝试懒启动自动自拍任务（供组件首次执行时调用）"""
+        if not self._auto_selfie_pending or not self._auto_selfie_task:
+            return
+        try:
+            asyncio.create_task(self._start_auto_selfie_after_delay())
+            self._auto_selfie_pending = False
+        except RuntimeError as exc:
+            logger.debug("自动自拍懒启动失败，等待下次重试: %s", exc)
+
+    def try_start_schedule_gen(self):
+        """尝试懒启动日程后台任务。"""
+        if not self._schedule_pending:
+            return
+        try:
+            asyncio.create_task(self._start_schedule_gen_after_delay())
+            self._schedule_pending = False
+        except RuntimeError as exc:
+            logger.debug("日程任务懒启动失败，等待下次重试: %s", exc)
+
+    async def _start_schedule_gen_after_delay(self) -> None:
+        """延迟15秒后初始化日程管理器并确保今日有日程。"""
+        await asyncio.sleep(15)
+        try:
+            from .core.schedule import get_schedule_manager
+
+            mgr = get_schedule_manager()
+            await mgr.ensure_db_initialized()
+            await mgr.ensure_today_schedule(plugin=self)
+            if self.get_config("schedule.auto_generate_enabled", True):
+                self._schedule_gen_task = asyncio.create_task(self._schedule_gen_loop())
         except Exception as e:
-            print(f"[selfie_painter] 自动迁移 plugin.name 失败（将继续使用现有配置）: {e}")
+            logger.error("[SelfiePainter] 日程初始化失败: %s", e, exc_info=True)
 
-        # 检查并更新配置（如果需要），传入原始配置
-        self._enhance_config_management(original_config)
+    async def _schedule_gen_loop(self) -> None:
+        """每日在指定时间重新生成日程。"""
+        import datetime
+        import random
 
-        # 重新同步 WebUI 配置快照，避免 super().__init__ 期间的旧内存配置导致页面显示为旧值
-        current_config = self.enhanced_config_manager.load_config()
-        if isinstance(current_config, dict) and current_config:
-            self.config = current_config
+        while True:
+            try:
+                gen_time_str = self.get_config("schedule.auto_generate_time", "06:30")
+                now = datetime.datetime.now()
+                hour, minute = map(int, gen_time_str.split(":"))
+                target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if target <= now:
+                    target += datetime.timedelta(days=1)
+                jitter = random.randint(0, 60)
+                wait_seconds = (target - now).total_seconds() + jitter
+                await asyncio.sleep(wait_seconds)
 
-        # 检查插件启用状态和定时自拍配置
-        from src.common.logger import get_logger as get_logger_func
+                from .core.schedule import get_schedule_manager
 
-        plugin_logger = get_logger_func("selfie_painter")
+                mgr = get_schedule_manager()
+                await mgr.ensure_today_schedule(plugin=self)
+                logger.info("[SelfiePainter] 每日日程生成完成")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error("[SelfiePainter] 日程生成循环异常: %s", e, exc_info=True)
+                await asyncio.sleep(300)
 
-        plugin_enabled = self.get_config("plugin.enabled", False)
-        auto_selfie_enabled = self.get_config("auto_selfie.enabled", False)
+    async def on_plugin_unload(self) -> None:
+        """插件卸载时停止后台任务。"""
+        await self._stop_auto_selfie_task()
+        await self._stop_schedule_gen_task()
 
-        # 注册定时任务
-        if plugin_enabled and auto_selfie_enabled:
-            from src.manager.async_task_manager import async_task_manager
-
-            # 【关键修复】检查全局 abort_flag 状态并自动修复
-            # 如果之前的操作（如停止所有任务）导致 abort_flag 仍处于 set 状态，
-            # 新注册的任务将直接跳过执行。这里需要强制清除它。
-            if async_task_manager.abort_flag.is_set():
-                plugin_logger.warning("[CustomPicPlugin] 检测到全局任务中止标志异常，已自动重置")
-                async_task_manager.abort_flag.clear()
-
-            self._register_auto_selfie_task()
-
-    def _register_auto_selfie_task(self):
-        """注册定时自拍任务"""
-        from src.common.logger import get_logger as get_logger_func
-
-        plugin_logger = get_logger_func("selfie_painter")
+    async def _stop_auto_selfie_task(self) -> None:
+        """停止自动自拍后台任务，避免重载后残留。"""
+        if not self._auto_selfie_task:
+            self._auto_selfie_pending = False
+            return
 
         try:
-            from src.manager.async_task_manager import async_task_manager
-            from .core.auto_selfie_task import AutoSelfieTask
-            import asyncio
+            await self._auto_selfie_task.stop()
+        except Exception as exc:
+            logger.warning("停止自动自拍任务失败: %s", exc, exc_info=True)
+        finally:
+            self._auto_selfie_task = None
+            self._auto_selfie_pending = False
 
-            # 创建并注册任务
-            task = AutoSelfieTask(self)
-
-            # 定义回调函数
-            def _on_task_added(t):
-                try:
-                    t.result()
-                    plugin_logger.info("[CustomPicPlugin] 定时自拍任务已成功注册")
-                except Exception as e:
-                    plugin_logger.error(f"[CustomPicPlugin] 定时自拍任务注册失败: {e}")
-
-            # 提交给事件循环
-            asyncio.create_task(async_task_manager.add_task(task, call_back=_on_task_added))
-
-        except Exception as e:
-            plugin_logger.error(f"[CustomPicPlugin] 注册定时任务时发生错误: {e}")
-
-    def _enhance_config_management(self, original_config=None):
-        """增强配置管理：备份、版本检查、智能合并
-
-        Args:
-            original_config: 从磁盘读取的原始配置（在父类初始化前读取），用于恢复用户自定义值
-        """
-        # 获取期望的配置版本
-        expected_version = self._get_expected_config_version()
-
-        # 将config_schema转换为EnhancedConfigManager需要的格式
-        schema_for_manager = self._convert_schema_for_manager()
-
-        # 生成默认配置结构
-        default_config = self._generate_default_config_from_schema()
-
-        # 确定要使用的旧配置：优先使用传入的原始配置，其次从备份文件加载
-        old_config = original_config
-        if old_config is None:
-            old_dir = os.path.join(self.plugin_dir, "old")
-            if os.path.exists(old_dir):
-                import toml
-
-                # 查找最新的备份文件（按时间戳排序），包括 auto_backup、new_backup 和 backup 文件
-                backup_files = []
-                for fname in os.listdir(old_dir):
-                    if (
-                        fname.startswith(self.config_file_name + ".backup_")
-                        or fname.startswith(self.config_file_name + ".new_backup_")
-                        or fname.startswith(self.config_file_name + ".auto_backup_")
-                    ) and fname.endswith(".toml"):
-                        backup_files.append(fname)
-                if backup_files:
-                    # 按时间戳排序（文件名中包含 _YYYYMMDD_HHMMSS）
-                    backup_files.sort(reverse=True)
-                    latest_backup = os.path.join(old_dir, backup_files[0])
-                    try:
-                        with open(latest_backup, "r", encoding="utf-8") as f:
-                            old_config = toml.load(f)
-                        print(f"[CustomPicPlugin] 从备份文件加载原始配置: {backup_files[0]}")
-                    except Exception as e:
-                        print(f"[CustomPicPlugin] 加载备份文件失败: {e}")
-
-        # 每次启动时创建备份（无论版本是否相同）
-        # 加载当前配置文件以获取版本
-        current_config = self.enhanced_config_manager.load_config()
-        if current_config:
-            current_version = self.enhanced_config_manager.get_config_version(current_config)
-            print(f"[CustomPicPlugin] 当前配置版本 v{current_version}，创建启动备份")
-            self.enhanced_config_manager.backup_config(current_version)
-        else:
-            print("[CustomPicPlugin] 配置文件不存在，跳过启动备份")
-
-        # 使用增强配置管理器检查并更新配置
-        # 传入旧配置（如果存在）以恢复用户自定义值
-        updated_config = self.enhanced_config_manager.update_config_if_needed(
-            expected_version=expected_version,
-            default_config=default_config,
-            schema=schema_for_manager,
-            old_config=old_config,
-        )
-
-        # 如果配置有更新，更新self.config
-        if updated_config and updated_config != self.config:
-            self.config = updated_config
-            # 同时更新enable_plugin状态
-            if "plugin" in self.config and "enabled" in self.config["plugin"]:
-                self.enable_plugin = self.config["plugin"]["enabled"]
-
-    def _get_expected_config_version(self) -> str:
-        """获取期望的配置版本号"""
-        if "plugin" in self.config_schema and isinstance(self.config_schema["plugin"], dict):
-            config_version_field = self.config_schema["plugin"].get("config_version")
-            if isinstance(config_version_field, ConfigField):
-                return config_version_field.default
-        return "1.0.0"
-
-    def _convert_schema_for_manager(self) -> Dict[str, Any]:
-        """将ConfigField格式的schema转换为EnhancedConfigManager需要的格式"""
-        schema_for_manager = {}
-
-        for section, fields in self.config_schema.items():
-            if not isinstance(fields, dict):
-                continue
-
-            section_schema = {}
-            for field_name, field in fields.items():
-                if isinstance(field, ConfigField):
-                    section_schema[field_name] = {
-                        "description": field.description,
-                        "default": field.default,
-                        "required": field.required,
-                        "choices": field.choices if field.choices else None,
-                        "example": field.example,
-                    }
-
-            schema_for_manager[section] = section_schema
-
-        return schema_for_manager
-
-    def _generate_default_config_from_schema(self) -> Dict[str, Any]:
-        """从schema生成默认配置结构"""
-        default_config = {}
-
-        for section, fields in self.config_schema.items():
-            if not isinstance(fields, dict):
-                continue
-
-            section_config = {}
-            for field_name, field in fields.items():
-                if isinstance(field, ConfigField):
-                    section_config[field_name] = field.default
-
-            default_config[section] = section_config
-
-        return default_config
-
-    def _get_model_ids_from_config(self) -> List[str]:
-        models = self.config.get("models", {})
-        if not isinstance(models, dict):
-            return self._DEFAULT_MODEL_IDS.copy()
-
-        parsed: List[Tuple[int, str]] = []
-        for key in models:
-            if not isinstance(key, str):
-                continue
-            match = self._MODEL_ID_RE.match(key)
-            if not match:
-                continue
-            parsed.append((int(match.group("num")), key.lower()))
-
-        if not parsed:
-            return self._DEFAULT_MODEL_IDS.copy()
-
-        parsed.sort(key=lambda item: item[0])
-        return [item[1] for item in parsed]
-
-    def _sync_style_fields(
-        self,
-        *,
-        sections: Dict[str, Any],
-        section_name: str,
-        config_key: str,
-        template_key: str,
-        prefix: str,
-        textarea: bool,
-    ) -> None:
-        section = sections.get(section_name)
-        if not isinstance(section, dict):
-            return
-
-        fields = section.get("fields")
-        if not isinstance(fields, dict):
-            return
-
-        template = fields.get(template_key)
-        if not isinstance(template, dict):
-            return
-
-        hint = fields.get("hint")
-        config_table = self.config.get(config_key, {})
-        if not isinstance(config_table, dict):
-            config_table = {}
-
-        rebuilt: Dict[str, Any] = {}
-        if isinstance(hint, dict):
-            hint_field = copy.deepcopy(hint)
-            hint_field["disabled"] = True
-            rebuilt["hint"] = hint_field
-
-        keys = sorted([k for k in config_table.keys() if isinstance(k, str) and k != "hint"])
-        order = 1
-        for key in keys:
-            field = copy.deepcopy(template)
-            field["name"] = key
-            field["label"] = key
-            field["default"] = config_table.get(key, field.get("default", ""))
-            field["description"] = f"{prefix}{key}"
-            field["order"] = order
-            field["input_type"] = "textarea" if textarea else "text"
-            if textarea:
-                field["rows"] = 3
-            rebuilt[key] = field
-            order += 1
-
-        section["fields"] = rebuilt
-
-    def get_webui_config_schema(self) -> Dict[str, Any]:
-        schema = super().get_webui_config_schema()
-        sections = schema.get("sections", {})
-        if not isinstance(sections, dict):
-            return schema
-
-        model_ids = self._get_model_ids_from_config()
-        allowed_sections = {f"models.{mid}" for mid in model_ids}
-
-        for section_name in list(sections.keys()):
-            if section_name.startswith("models.model") and section_name not in allowed_sections:
-                sections.pop(section_name, None)
-
-        template_model_section = sections.get("models.model1")
-        if isinstance(template_model_section, dict):
-            for mid in model_ids:
-                section_name = f"models.{mid}"
-                match = self._MODEL_ID_RE.match(mid)
-                model_number = int(match.group("num")) if match else 1
-
-                if section_name not in sections:
-                    new_section = copy.deepcopy(template_model_section)
-                    new_section["name"] = section_name
-                    new_section["label"] = f"模型{model_number}配置"
-                    sections[section_name] = new_section
-
-                current = sections.get(section_name, {})
-                if isinstance(current, dict):
-                    current["title"] = f"模型{model_number}配置"
-                    current["label"] = f"模型{model_number}配置"
-                    current["order"] = 13 + model_number
-
-                model_cfg = (
-                    self.config.get("models", {}).get(mid, {})
-                    if isinstance(self.config.get("models", {}), dict)
-                    else {}
-                )
-                current_fields = current.get("fields") if isinstance(current, dict) else None
-                if isinstance(current_fields, dict) and isinstance(model_cfg, dict):
-                    for fname, fmeta in current_fields.items():
-                        if isinstance(fmeta, dict) and fname in model_cfg:
-                            fmeta["default"] = model_cfg.get(fname)
-
-        self._sync_style_fields(
-            sections=sections,
-            section_name="styles",
-            config_key="styles",
-            template_key="cartoon",
-            prefix="风格提示词：",
-            textarea=True,
-        )
-        self._sync_style_fields(
-            sections=sections,
-            section_name="style_aliases",
-            config_key="style_aliases",
-            template_key="cartoon",
-            prefix="风格别名：",
-            textarea=False,
-        )
-
-        layout = schema.get("layout")
-        if isinstance(layout, dict):
-            tabs = layout.get("tabs")
-            if isinstance(tabs, list):
-                for tab in tabs:
-                    if isinstance(tab, dict) and tab.get("id") == "models":
-                        tab["sections"] = ["models"] + [f"models.{mid}" for mid in model_ids]
-                        break
-
-        schema["sections"] = sections
-        return schema
+    async def _stop_schedule_gen_task(self) -> None:
+        """停止日程后台任务。"""
+        if self._schedule_gen_task and not self._schedule_gen_task.done():
+            self._schedule_gen_task.cancel()
+            try:
+                await self._schedule_gen_task
+            except asyncio.CancelledError:
+                pass
+        self._schedule_gen_task = None
+        self._schedule_pending = False
 
     def get_plugin_components(self) -> List[Tuple[ComponentInfo, Type]]:
         """返回插件包含的组件列表"""
@@ -1288,7 +2441,7 @@ class CustomPicPlugin(BasePlugin):
         components = []
 
         if enable_unified_generation:
-            components.append((CustomPicAction.get_action_info(), CustomPicAction))
+            components.append((SelfiePainterAction.get_action_info(), SelfiePainterAction))
 
         # 优先注册更具体的配置管理命令，避免被通用风格命令拦截
         if enable_pic_config:
@@ -1299,6 +2452,13 @@ class CustomPicPlugin(BasePlugin):
 
         # 最后注册通用的风格命令，以免覆盖特定命令
         if enable_pic_command:
+            components.append((WardrobeCommand.get_command_info(), WardrobeCommand))
             components.append((PicGenerationCommand.get_command_info(), PicGenerationCommand))
+
+        # 注册 /schedule 命令
+        components.append((ScheduleCommand.get_command_info(), ScheduleCommand))
+        # 注册日程注入 EventHandler
+        if self.get_config("schedule_inject.enabled", True):
+            components.append((ScheduleInjectHandler.get_handler_info(), ScheduleInjectHandler))
 
         return components

@@ -1,11 +1,9 @@
 """Gemini API客户端"""
-
 import json
-import requests
 from typing import Dict, Any, Tuple, Optional
 
-from .base_client import BaseApiClient, logger
-from ..size_utils import pixel_size_to_gemini_aspect
+from .base_client import BaseApiClient, logger, get_requests_module
+from ..utils import pixel_size_to_gemini_aspect
 
 
 class GeminiClient(BaseApiClient):
@@ -19,20 +17,24 @@ class GeminiClient(BaseApiClient):
         model_config: Dict[str, Any],
         size: str,
         strength: Optional[float] = None,
-        input_image_base64: Optional[str] = None,
+        input_image_base64: Optional[str] = None
     ) -> Tuple[bool, str]:
         """发送Gemini格式的HTTP请求生成图片"""
+        requests = get_requests_module()
         try:
             # API配置
             api_key = model_config.get("api_key", "").replace("Bearer ", "")
             model_name = model_config.get("model", "gemini-2.5-flash-image-preview")
-            base_url = model_config.get("base_url", "https://generativelanguage.googleapis.com").rstrip("/")
+            base_url = model_config.get("base_url", "https://generativelanguage.googleapis.com").rstrip('/')
 
             # 构建API端点
             url = f"{base_url}/v1beta/models/{model_name}:generateContent"
 
             # 请求头
-            headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+            headers = {
+                "x-goog-api-key": api_key,
+                "Content-Type": "application/json"
+            }
 
             # 获取模型特定的配置参数
             custom_prompt_add = model_config.get("custom_prompt_add", "")
@@ -49,7 +51,12 @@ class GeminiClient(BaseApiClient):
                     clean_base64 = self._get_clean_base64(input_image_base64)
                     mime_type = self._detect_mime_type(input_image_base64)
 
-                    parts.append({"inline_data": {"mime_type": mime_type, "data": clean_base64}})
+                    parts.append({
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": clean_base64
+                        }
+                    })
 
                 except Exception as e:
                     logger.error(f"{self.log_prefix} (Gemini) 图片处理失败: {e}")
@@ -59,9 +66,14 @@ class GeminiClient(BaseApiClient):
 
             # 构建请求体
             request_data = {
-                "contents": [{"role": "user", "parts": parts}],
+                "contents": [{
+                    "role": "user",
+                    "parts": parts
+                }],
                 "safetySettings": model_config.get("safety_settings") or [],
-                "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+                "generationConfig": {
+                    "responseModalities": ["TEXT", "IMAGE"]
+                }
             }
 
             # 添加 Gemini 图片尺寸配置
@@ -80,11 +92,14 @@ class GeminiClient(BaseApiClient):
                 "url": url,
                 "headers": headers,
                 "json": request_data,
-                "timeout": proxy_config.get("timeout", 120) if proxy_config else 120,
+                "timeout": proxy_config.get('timeout', 120) if proxy_config else 120
             }
 
             if proxy_config:
-                request_kwargs["proxies"] = {"http": proxy_config["http"], "https": proxy_config["https"]}
+                request_kwargs["proxies"] = {
+                    "http": proxy_config["http"],
+                    "https": proxy_config["https"]
+                }
 
             # 发送请求
             response = requests.post(**request_kwargs)
@@ -125,16 +140,15 @@ class GeminiClient(BaseApiClient):
                 logger.error(f"{self.log_prefix} (Gemini) JSON解析失败: {e}")
                 return False, f"响应解析失败: {str(e)}"
 
-        except requests.RequestException as e:
-            logger.error(f"{self.log_prefix} (Gemini) 网络请求异常: {e}")
-            return False, f"网络请求失败: {str(e)}"
-
         except Exception as e:
             logger.error(f"{self.log_prefix} (Gemini) 请求异常: {e!r}", exc_info=True)
             return False, f"请求失败: {str(e)}"
 
     def _build_gemini_image_config(
-        self, model_name: str, model_config: Dict[str, Any], llm_size: Optional[str] = None
+        self,
+        model_name: str,
+        model_config: Dict[str, Any],
+        llm_size: Optional[str] = None,
     ) -> Optional[Dict[str, str]]:
         """构建 Gemini 图片配置"""
         fixed_size_enabled = model_config.get("fixed_size_enabled", False)

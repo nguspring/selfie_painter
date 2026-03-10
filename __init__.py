@@ -1,8 +1,8 @@
 """
-自定义图片生成插件
-支持文生图和图生图功能
+麦麦绘卷（Claude MAInet）
+智能多模型图片生成插件，支持文生图和图生图
 """
 
-from .plugin import CustomPicPlugin
+from .plugin import SelfiePainterV2Plugin
 
-__all__ = ["CustomPicPlugin"]
+__all__ = ['SelfiePainterV2Plugin']

@@ -4,13 +4,11 @@
 API格式：GET请求，参数通过URL传递
 示例：https://std.loliyc.com/generate?tag=prompt&token=xxx&model=nai-diffusion-4-5-full&size=832x1216&steps=23&scale=5&cfg=0&sampler=k_euler_ancestral&nocache=0&noise_schedule=karras
 """
-
 import base64
-import requests
 from typing import Dict, Any, Tuple, Optional
 from urllib.parse import urlencode
 
-from .base_client import BaseApiClient, logger
+from .base_client import BaseApiClient, logger, get_requests_module
 
 
 class ShatangyunClient(BaseApiClient):
@@ -27,9 +25,10 @@ class ShatangyunClient(BaseApiClient):
         input_image_base64: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """发送砂糖云格式的HTTP请求生成图片"""
+        requests = get_requests_module()
         try:
             # API配置
-            base_url = model_config.get("base_url", "https://std.loliyc.com").rstrip("/")
+            base_url = model_config.get("base_url", "https://std.loliyc.com").rstrip('/')
             token = model_config.get("api_key", "").replace("Bearer ", "")
             model = model_config.get("model", "nai-diffusion-4-5-full")
 
@@ -74,15 +73,21 @@ class ShatangyunClient(BaseApiClient):
             url = f"{endpoint}?{urlencode(params)}"
 
             logger.info(f"{self.log_prefix} (砂糖云) 发起图片请求: {model}, Size: {size_param}")
-            logger.debug(f"{self.log_prefix} (砂糖云) URL: {url[:100]}...")
+            logger.debug(f"{self.log_prefix} (砂糖云) 请求端点: {endpoint} (已隐藏query参数)")
 
             # 获取代理配置
             proxy_config = self._get_proxy_config()
 
-            request_kwargs = {"url": url, "timeout": proxy_config.get("timeout", 120) if proxy_config else 120}
+            request_kwargs = {
+                "url": url,
+                "timeout": proxy_config.get('timeout', 120) if proxy_config else 120
+            }
 
             if proxy_config:
-                request_kwargs["proxies"] = {"http": proxy_config["http"], "https": proxy_config["https"]}
+                request_kwargs["proxies"] = {
+                    "http": proxy_config["http"],
+                    "https": proxy_config["https"]
+                }
 
             # 发送GET请求获取图片
             response = requests.get(**request_kwargs)
@@ -92,10 +97,10 @@ class ShatangyunClient(BaseApiClient):
                 return False, f"请求失败: HTTP {response.status_code}"
 
             # 检查返回的内容类型
-            content_type = response.headers.get("Content-Type", "")
-            if "image" in content_type:
+            content_type = response.headers.get('Content-Type', '')
+            if 'image' in content_type:
                 # 直接返回图片的base64编码
-                image_base64 = base64.b64encode(response.content).decode("utf-8")
+                image_base64 = base64.b64encode(response.content).decode('utf-8')
                 logger.info(f"{self.log_prefix} (砂糖云) 图片生成成功，大小: {len(response.content)} bytes")
                 return True, image_base64
             else:
@@ -103,10 +108,6 @@ class ShatangyunClient(BaseApiClient):
                 error_text = response.text[:200]
                 logger.error(f"{self.log_prefix} (砂糖云) 未返回图片数据: {error_text}")
                 return False, f"未返回图片数据: {error_text}"
-
-        except requests.RequestException as e:
-            logger.error(f"{self.log_prefix} (砂糖云) 网络请求异常: {e}")
-            return False, f"网络请求失败: {str(e)}"
 
         except Exception as e:
             logger.error(f"{self.log_prefix} (砂糖云) 请求异常: {e!r}", exc_info=True)
