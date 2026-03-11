@@ -43,7 +43,7 @@ class SelfiePainterV2Plugin(BasePlugin):
 
     # 插件基本信息
     plugin_name = "selfie_painter_v2"
-    plugin_version = "3.6.0"
+    plugin_version = "3.6.1"
     plugin_author = "Ptrel，Rabbit，saberlights Kiuon，nguspring"
     enable_plugin = True
     dependencies: List[str] = []
@@ -178,7 +178,7 @@ class SelfiePainterV2Plugin(BasePlugin):
                 order=1,
             ),
             "config_version": ConfigField(
-                type=str, default="3.6.0", description="插件配置版本号", label="配置版本", disabled=True, order=2
+                type=str, default="3.6.1", description="插件配置版本号", label="配置版本", disabled=True, order=2
             ),
             "enabled": ConfigField(
                 type=bool,
@@ -271,6 +271,13 @@ class SelfiePainterV2Plugin(BasePlugin):
                 label="详细调试",
                 order=7,
             ),
+            "show_all_prompts": ConfigField(
+                type=bool,
+                default=False,
+                description="是否在后台日志中显示本次实际送去生图接口的完整提示词。开启后日志会记录完整正面提示词、负面提示词和自拍风格，不会发送到QQ聊天界面",
+                label="显示全部提示词",
+                order=8,
+            ),
             "admin_users": ConfigField(
                 type=list,
                 default=[],
@@ -279,7 +286,7 @@ class SelfiePainterV2Plugin(BasePlugin):
                 hint='字符串形式的用户ID，如 ["12345", "67890"]',
                 item_type="string",
                 placeholder='["用户ID1", "用户ID2"]',
-                order=8,
+                order=9,
             ),
             "max_retries": ConfigField(
                 type=int,
@@ -288,7 +295,7 @@ class SelfiePainterV2Plugin(BasePlugin):
                 label="重试次数",
                 min=0,
                 max=10,
-                order=9,
+                order=10,
             ),
         },
         "proxy": {
@@ -403,6 +410,15 @@ class SelfiePainterV2Plugin(BasePlugin):
                 depends_value=True,
                 order=6,
             ),
+            "show_prompt_details": ConfigField(
+                type=bool,
+                default=False,
+                description="是否在后台日志中完整显示自拍模式本次使用的提示词与负面提示词，仅用于排查风格是否真的切换，不会发送到QQ聊天界面",
+                label="自拍显示提示词",
+                depends_on="selfie.enabled",
+                depends_value=True,
+                order=7,
+            ),
         },
         "wardrobe": {
             # ========== 总开关（默认关闭） ==========
@@ -413,7 +429,6 @@ class SelfiePainterV2Plugin(BasePlugin):
                 label="启用衣柜",
                 order=1,
             ),
-            
             # ========== 每日穿搭 ==========
             "daily_outfits": ConfigField(
                 type=list,
@@ -424,7 +439,6 @@ class SelfiePainterV2Plugin(BasePlugin):
                 depends_value=True,
                 order=10,
             ),
-            
             # ========== 自动换装 ==========
             "auto_scene_change": ConfigField(
                 type=bool,
@@ -435,7 +449,6 @@ class SelfiePainterV2Plugin(BasePlugin):
                 depends_value=True,
                 order=20,
             ),
-            
             # ========== 自定义场景 ==========
             "custom_scenes": ConfigField(
                 type=list,
@@ -590,7 +603,6 @@ class SelfiePainterV2Plugin(BasePlugin):
                 placeholder="planner",
                 order=3,
             ),
-            
             # ========== 人设补充配置 ==========
             # 这些配置用于补充主程序人设，让日程更贴合麦麦的性格
             "schedule_identity": ConfigField(
@@ -617,7 +629,6 @@ class SelfiePainterV2Plugin(BasePlugin):
                 placeholder="习惯晚睡，经常熬夜",
                 order=12,
             ),
-            
             # ========== 历史记忆配置 ==========
             # 让日程有连续性，昨天的日程会影响今天的安排
             "schedule_history_days": ConfigField(
@@ -638,7 +649,6 @@ class SelfiePainterV2Plugin(BasePlugin):
                 max=365,
                 order=21,
             ),
-            
             # ========== 自定义Prompt配置 ==========
             "schedule_custom_prompt": ConfigField(
                 type=str,
@@ -648,7 +658,6 @@ class SelfiePainterV2Plugin(BasePlugin):
                 placeholder="日程安排要宽松一些，多安排休息时间",
                 order=30,
             ),
-            
             # ========== 多轮生成配置 ==========
             # 提升日程生成质量，避免空档、描述过短等问题
             "schedule_multi_round": ConfigField(
@@ -716,7 +725,6 @@ class SelfiePainterV2Plugin(BasePlugin):
                 depends_value=True,
                 order=4,
             ),
-            
             # ========== 智能注入增强配置 ==========
             # 这些配置用于让注入更智能，避免在不相关的问题上注入日程
             "schedule_intent_enable": ConfigField(
