@@ -12,6 +12,7 @@ from typing import Any
 from .schedule_db import ScheduleDB
 from .schedule_llm_generator import generate_schedule_via_llm
 from .schedule_models import (
+    ScheduleItem,
     from_db_row,
     is_minutes_in_range,
     schedule_item_to_activity_info,
@@ -70,7 +71,7 @@ class ScheduleManager:
                 plugin=plugin,
                 target_date=target_date,
                 model_id=model_id,
-                schedule_manager=self  # 传入 self 以支持历史记忆
+                schedule_manager=self,  # 传入 self 以支持历史记忆
             )
             if not items:
                 return
@@ -85,6 +86,23 @@ class ScheduleManager:
             logger.info("[ScheduleManager] LLM 覆盖日程成功: %s", target_date)
         except Exception as exc:
             logger.error("[ScheduleManager] LLM 覆盖异常: %s", exc, exc_info=True)
+
+    @staticmethod
+    def _pick_activity_fallback_item(items: list[ScheduleItem], current_minutes: int) -> ScheduleItem | None:
+        """未命中时间区间时，选择最贴近“当前时刻”的活动项。
+
+        规则：
+        1. 优先选择“已经开始”的最后一项（start_min <= current_minutes 的最大项）
+        2. 若当前时间早于当天首项，则回退到第一项
+        """
+        if not items:
+            return None
+
+        started_items = [item for item in items if item.start_min <= current_minutes]
+        if started_items:
+            return started_items[-1]
+
+        return items[0]
 
     async def get_current_activity(self):
         """获取当前活动，永不返回 None。"""
@@ -102,14 +120,19 @@ class ScheduleManager:
             for item in items:
                 if is_minutes_in_range(current_minutes, item.start_min, item.end_min):
                     return schedule_item_to_activity_info(item, now_str)
-            return schedule_item_to_activity_info(items[0], now_str)
+
+            fallback_item = self._pick_activity_fallback_item(items, current_minutes)
+            if fallback_item is not None:
+                return schedule_item_to_activity_info(fallback_item, now_str)
 
         fallback_items = get_template_schedule(today)
         for item in fallback_items:
             if is_minutes_in_range(current_minutes, item.start_min, item.end_min):
                 return schedule_item_to_activity_info(item, now_str)
-        if fallback_items:
-            return schedule_item_to_activity_info(fallback_items[0], now_str)
+
+        fallback_item = self._pick_activity_fallback_item(fallback_items, current_minutes)
+        if fallback_item is not None:
+            return schedule_item_to_activity_info(fallback_item, now_str)
 
         return ActivityInfo(
             activity_type=ActivityType.OTHER,
@@ -172,9 +195,7 @@ class ScheduleManager:
 
     # ========== 历史记忆相关方法 ==========
 
-    async def get_history_schedule_items(
-        self, days: int = 1
-    ) -> dict[str, list[Any]]:
+    async def get_history_schedule_items(self, days: int = 1) -> dict[str, list[Any]]:
         """
         获取历史日程数据。
 
@@ -207,9 +228,7 @@ class ScheduleManager:
 
         return result
 
-    async def get_history_schedule_summary(
-        self, days: int = 1, max_length: int = 500
-    ) -> str:
+    async def get_history_schedule_summary(self, days: int = 1, max_length: int = 500) -> str:
         """
         获取历史日程摘要（用于 LLM 上下文）。
 

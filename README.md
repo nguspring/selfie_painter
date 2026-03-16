@@ -5,14 +5,14 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.6.1-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.6.2-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
 
 ---
 
-> 🚀 **从 v3.5.x 升级到 v3.6.1？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v361)。
+> 🚀 **从 v3.5.x 升级到 v3.6.2？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v362)。
 
 ---
 
@@ -22,21 +22,21 @@
 >
 > 1. 最初基于原版 [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) 修改，发布为 `selfie_painter`（v3.4.x ~ v3.5.x）
 > 2. 原作者后来将 custom_pic_plugin 升级重构为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)（v3.4.0）
-> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.1）
+> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.2）
 >
 > | 项目 | 链接 |
 > |------|------|
 > | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
 > | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.6.1 |
+> | 当前版本 | v3.6.2 |
 >
 > **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
 
 ---
 
-## 🔄 从 v3.5.x 升级到 v3.6.1
+## 🔄 从 v3.5.x 升级到 v3.6.2
 
-v3.6.1 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
+v3.6.2 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
 
 **请删除旧版插件目录后重新安装：**
 
@@ -467,11 +467,12 @@ num_inference_steps = 30
 
 ## 📝 更新日志
 
-### v3.6.1 (改版) — 2026-03-12
+### v3.6.2 (改版) — 2026-03-16
 
 - 🔧 修复自拍风格值在不同链路中的标准化问题，避免异常值静默回退到 `standard`
 - 🔧 新增后台日志完整提示词开关，便于排查本次生图实际使用的提示词
-- 📝 统一插件元数据、配置版本与文档版本号到 3.6.1
+- 🔧 修复晚间补启动首次自拍时活动回退错误：未命中区间时按当前时刻选择最近已开始活动，避免误回退到早晨时段
+- 📝 统一插件元数据、配置版本与文档版本号到 3.6.2
 
 ### v3.6.0 (改版) — 2026-03-07
 
@@ -597,7 +598,7 @@ num_inference_steps = 30
 4. saberlights Kiuon 加入，添加自拍功能和自然语言命令功能
 5. 原作者将 custom_pic_plugin 升级为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)
 6. nguspring 加入，基于原版开发修改版 selfie_painter（v3.4.x ~ v3.5.x）：日程系统重大升级（人设驱动、历史记忆、多轮生成、智能注入）
-7. v3.6.1：基于 mais-art-journal 合并重构为 selfie_painter_v2，并持续修复自拍与提示词相关问题
+7. v3.6.2：基于 mais-art-journal 合并重构为 selfie_painter_v2，并持续修复自拍与提示词相关问题
 
 ## 🔗 版权信息
 
