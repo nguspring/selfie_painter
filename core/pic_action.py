@@ -12,13 +12,26 @@ from src.common.logger import get_logger  # pyright: ignore[reportMissingImports
 
 from .api_clients import get_client_class
 from .utils import (
-    ImageProcessor, CacheManager, validate_image_size, get_image_size,
-    runtime_state, SELFIE_HAND_NEGATIVE, ANTI_DUAL_PHONE_PROMPT, ANTI_CAMERA_DEVICE_PROMPT,
-    get_model_config, merge_negative_prompt, inject_llm_original_size,
-    resolve_image_data, schedule_auto_recall, optimize_prompt,
+    ImageProcessor,
+    CacheManager,
+    validate_image_size,
+    get_image_size,
+    runtime_state,
+    SELFIE_HAND_NEGATIVE,
+    ANTI_DUAL_PHONE_PROMPT,
+    ANTI_CAMERA_DEVICE_PROMPT,
+    get_model_config,
+    merge_negative_prompt,
+    inject_llm_original_size,
+    resolve_image_data,
+    schedule_auto_recall,
+    optimize_prompt,
+    normalize_selfie_style,
+    get_selfie_style_display_name,
 )
 
 logger = get_logger("selfie_painter")
+
 
 class SelfiePainterAction(BaseAction):
     """统一的图片生成动作，智能检测文生图或图生图"""
@@ -41,13 +54,44 @@ class SelfiePainterAction(BaseAction):
     # 关键词设置（用于Normal模式）
     activation_keywords = [
         # 文生图关键词
-        "画", "绘制", "生成图片", "画图", "draw", "paint", "图片生成", "创作",
+        "画",
+        "绘制",
+        "生成图片",
+        "画图",
+        "draw",
+        "paint",
+        "图片生成",
+        "创作",
         # 图生图关键词
-        "图生图", "修改图片", "基于这张图", "img2img", "重画", "改图", "图片修改",
-        "改成", "换成", "变成", "转换成", "风格", "画风", "改风格", "换风格",
-        "这张图", "这个图", "图片风格", "改画风", "重新画", "再画", "重做",
+        "图生图",
+        "修改图片",
+        "基于这张图",
+        "img2img",
+        "重画",
+        "改图",
+        "图片修改",
+        "改成",
+        "换成",
+        "变成",
+        "转换成",
+        "风格",
+        "画风",
+        "改风格",
+        "换风格",
+        "这张图",
+        "这个图",
+        "图片风格",
+        "改画风",
+        "重新画",
+        "再画",
+        "重做",
         # 自拍关键词
-        "自拍", "selfie", "拍照", "对镜自拍", "镜子自拍", "照镜子"
+        "自拍",
+        "selfie",
+        "拍照",
+        "对镜自拍",
+        "镜子自拍",
+        "照镜子",
     ]
 
     # LLM判定提示词（用于Focus模式）
@@ -91,7 +135,7 @@ class SelfiePainterAction(BaseAction):
         "size": "图片尺寸，如512x512、1024x1024等（可选，不指定则使用模型默认尺寸）",
         "selfie_mode": "是否启用自拍模式（true/false，可选，默认false）。启用后会自动添加自拍场景和手部动作",
         "selfie_style": "自拍风格，可选值：standard（标准自拍，前置摄像头视角），mirror（对镜自拍，室内镜子场景），photo（第三人称照片，他人拍摄视角，自然姿态）。仅在selfie_mode=true时生效，可选，默认standard",
-        "free_hand_action": "自由手部动作描述（英文）。如果指定此参数，将使用此动作而不是随机生成。仅在selfie_mode=true时生效，可选"
+        "free_hand_action": "自由手部动作描述（英文）。如果指定此参数，将使用此动作而不是随机生成。仅在selfie_mode=true时生效，可选",
     }
 
     # 动作使用场景
@@ -101,7 +145,7 @@ class SelfiePainterAction(BaseAction):
         "自动检测是否有输入图片来决定文生图或图生图模式",
         "重点：不要连续发，如果你在前10句内已经发送过[图片]或者[表情包]或记录出现过类似描述的[图片]，就不要选择此动作",
         "支持指定模型：用户可以通过'用模型1画'、'model2生成'等方式指定特定模型",
-        "自拍模式选择：用户要求'自拍/拍个自拍'时用standard；要求'照镜子/对镜拍'时用mirror；要求'拍张照片/画一张你在XX的照片/第三人称'等非自拍视角时用photo"
+        "自拍模式选择：用户要求'自拍/拍个自拍'时用standard；要求'照镜子/对镜拍'时用mirror；要求'拍张照片/画一张你在XX的照片/第三人称'等非自拍视角时用photo",
     ]
     associated_types = ["text", "image"]
 
@@ -125,6 +169,7 @@ class SelfiePainterAction(BaseAction):
         # 懒启动自动自拍任务（如果插件初始化时事件循环未就绪）
         try:
             from src.plugin_system.core.plugin_manager import plugin_manager  # pyright: ignore[reportMissingImports]
+
             plugin_instance = plugin_manager.get_plugin_instance("selfie_painter_v2")
             if plugin_instance:
                 startup_handler = getattr(plugin_instance, "try_start_auto_selfie", None)
@@ -157,13 +202,12 @@ class SelfiePainterAction(BaseAction):
         free_hand_action = self.action_data.get("free_hand_action", "").strip()
 
         # 自拍风格优先级：运行时命令设置 > LLM 指定 > 全局配置
-        global_style_raw: object = self.get_config("selfie.default_style", "standard")
-        global_style: str = global_style_raw if isinstance(global_style_raw, str) and global_style_raw else "standard"
+        global_style = normalize_selfie_style(self.get_config("selfie.default_style", "standard"))
         runtime_style = runtime_state.get_selfie_style(self.chat_id, None)
         if runtime_style is not None:
-            selfie_style = runtime_style
-        elif selfie_style_llm in ("standard", "mirror", "photo"):
-            selfie_style = selfie_style_llm
+            selfie_style = normalize_selfie_style(runtime_style, global_style)
+        elif selfie_style_llm:
+            selfie_style = normalize_selfie_style(selfie_style_llm, global_style)
         else:
             selfie_style = global_style
 
@@ -249,6 +293,7 @@ class SelfiePainterAction(BaseAction):
                 try:
                     from .selfie.schedule_provider import get_schedule_provider
                     from .selfie.scene_action_generator import generate_scene_with_llm, get_action_for_activity
+
                     provider = get_schedule_provider()
                     activity = await provider.get_current_activity()
                     # 优先使用 LLM 生成场景，失败时回退到确定性映射
@@ -261,8 +306,15 @@ class SelfiePainterAction(BaseAction):
                 except Exception as e:
                     logger.debug(f"{self.log_prefix} 获取日程活动失败（非必要）: {e}")
 
-            description, selfie_negative_prompt = await self._process_selfie_prompt(description, selfie_style, free_hand_action, model_id, activity_scene)
-            logger.info(f"{self.log_prefix} 自拍模式处理后的提示词: {description[:100]}...")
+            description, selfie_negative_prompt = await self._process_selfie_prompt(
+                description, selfie_style, free_hand_action, model_id, activity_scene
+            )
+            self._log_prompt_trace(
+                positive_prompt=description,
+                negative_prompt=selfie_negative_prompt,
+                selfie_style=selfie_style,
+                default_preview_label="自拍模式处理后的提示词",
+            )
 
             # 检查是否配置了参考图片
             reference_image = self._get_selfie_reference_image()
@@ -271,7 +323,14 @@ class SelfiePainterAction(BaseAction):
                 model_config = self._get_model_config(model_id)
                 if model_config and model_config.get("support_img2img", True):
                     logger.info(f"{self.log_prefix} 使用自拍参考图片进行图生图")
-                    return await self._execute_unified_generation(description, model_id, size, strength or 0.6, reference_image, extra_negative_prompt=selfie_negative_prompt)
+                    return await self._execute_unified_generation(
+                        description,
+                        model_id,
+                        size,
+                        strength or 0.6,
+                        reference_image,
+                        extra_negative_prompt=selfie_negative_prompt,
+                    )
                 else:
                     logger.warning(f"{self.log_prefix} 模型 {model_id} 不支持图生图，自拍回退为文生图模式")
             # 无参考图或模型不支持，继续使用文生图（带负面提示词）
@@ -289,15 +348,44 @@ class SelfiePainterAction(BaseAction):
             if model_config and not model_config.get("support_img2img", True):
                 logger.warning(f"{self.log_prefix} 模型 {model_id} 不支持图生图，转为文生图模式")
                 await self.send_text(f"当前模型 {model_id} 不支持图生图功能，将为您生成新图片")
-                return await self._execute_unified_generation(description, model_id, size, None, None, extra_negative_prompt=extra_neg)
+                return await self._execute_unified_generation(
+                    description,
+                    model_id,
+                    size,
+                    None,
+                    None,
+                    extra_negative_prompt=extra_neg,
+                )
 
             logger.info(f"{self.log_prefix} 检测到输入图片，使用图生图模式")
-            return await self._execute_unified_generation(description, model_id, size, strength, input_image_base64, extra_negative_prompt=extra_neg)
+            return await self._execute_unified_generation(
+                description,
+                model_id,
+                size,
+                strength,
+                input_image_base64,
+                extra_negative_prompt=extra_neg,
+            )
         else:
             logger.info(f"{self.log_prefix} 未检测到输入图片，使用文生图模式")
-            return await self._execute_unified_generation(description, model_id, size, None, None, extra_negative_prompt=extra_neg)
+            return await self._execute_unified_generation(
+                description,
+                model_id,
+                size,
+                None,
+                None,
+                extra_negative_prompt=extra_neg,
+            )
 
-    async def _execute_unified_generation(self, description: str, model_id: str, size: str, strength: Optional[float] = None, input_image_base64: Optional[str] = None, extra_negative_prompt: Optional[str] = None) -> Tuple[bool, str]:
+    async def _execute_unified_generation(
+        self,
+        description: str,
+        model_id: str,
+        size: str,
+        strength: Optional[float] = None,
+        input_image_base64: Optional[str] = None,
+        extra_negative_prompt: Optional[str] = None,
+    ) -> Tuple[bool, str]:
         """统一的图片生成执行方法
 
         Args:
@@ -317,14 +405,14 @@ class SelfiePainterAction(BaseAction):
         http_base_url = model_config.get("base_url")
         http_api_key = model_config.get("api_key")
         api_format = model_config.get("format", "openai")
-        
+
         # 检查base_url
         if not http_base_url:
             error_msg = "抱歉，图片生成功能所需的HTTP配置（如API地址）不完整，无法提供服务。"
             await self.send_text(error_msg)
             logger.error(f"{self.log_prefix} HTTP调用配置缺失: base_url.")
             return False, "HTTP配置不完整"
-        
+
         # 检查api_key（comfyui格式允许为空）
         if api_format != "comfyui" and not http_api_key:
             error_msg = "抱歉，图片生成功能所需的HTTP配置（如API密钥）不完整，无法提供服务。"
@@ -333,8 +421,10 @@ class SelfiePainterAction(BaseAction):
             return False, "HTTP配置不完整"
 
         # API密钥验证（comfyui格式不需要API密钥）
-        if api_format != "comfyui" and isinstance(http_api_key, str) and (
-            "YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key
+        if (
+            api_format != "comfyui"
+            and isinstance(http_api_key, str)
+            and ("YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key)
         ):
             error_msg = "图片生成功能尚未配置，请设置正确的API密钥。"
             await self.send_text(error_msg)
@@ -395,7 +485,7 @@ class SelfiePainterAction(BaseAction):
                 size=image_size,
                 strength=strength,
                 input_image_base64=input_image_base64,
-                max_retries=max_retries
+                max_retries=max_retries,
             )
         except Exception as e:
             logger.error(f"{self.log_prefix} 异步请求执行失败: {e!r}", exc_info=True)
@@ -416,7 +506,9 @@ class SelfiePainterAction(BaseAction):
                         mode_text = "图生图" if is_img2img else "文生图"
                         if enable_debug:
                             await self.send_text(f"{mode_text}完成！")
-                        self.cache_manager.cache_result(description, model_name, image_size, strength, is_img2img, resolved_data)
+                        self.cache_manager.cache_result(
+                            description, model_name, image_size, strength, is_img2img, resolved_data
+                        )
                         await self._schedule_auto_recall_for_recent_message(model_config, model_id, send_timestamp)
                         return True, f"{mode_text}已成功生成并发送"
                     else:
@@ -484,7 +576,7 @@ class SelfiePainterAction(BaseAction):
 
         # 2. 从独立的selfie配置中获取Bot的默认形象特征（不再从模型配置中获取）
         bot_appearance_raw: object = self.get_config("selfie.prompt_prefix", "")
-        bot_appearance = (bot_appearance_raw.strip() if isinstance(bot_appearance_raw, str) else "")
+        bot_appearance = bot_appearance_raw.strip() if isinstance(bot_appearance_raw, str) else ""
 
         # 2.1 可选：注入衣柜系统选择的穿搭 prompt（只影响自拍，不影响 /dr 普通画图）
         # 注入点要求：必须在 bot_appearance append 到 prompt_parts 之前完成。
@@ -566,10 +658,13 @@ class SelfiePainterAction(BaseAction):
             # 英文: "cafe, warm" ≈10字符; 中文: "在咖啡厅" = 4字符
             # 用 3 个中文字 / 6 个英文字符 作为阈值
             desc_clean = description.strip().strip(",. 、，。")
-            desc_long_enough = len(desc_clean) > 3 if any('\u4e00' <= c <= '\u9fff' for c in desc_clean) else len(desc_clean) > 6
+            desc_long_enough = (
+                len(desc_clean) > 3 if any("\u4e00" <= c <= "\u9fff" for c in desc_clean) else len(desc_clean) > 6
+            )
             if desc_long_enough:
                 try:
                     from .selfie.scene_action_generator import generate_hand_action_with_llm
+
                     hand_action = await generate_hand_action_with_llm(description, selfie_style)
                     if hand_action:
                         logger.info(f"{self.log_prefix} LLM 生成{selfie_style}风格手部动作: {hand_action[:60]}")
@@ -595,6 +690,7 @@ class SelfiePainterAction(BaseAction):
 
         # 6. 手部动作处理：过滤不当词汇 + 按风格加权重
         import re as _re
+
         # standard 模式过滤手机类词汇（LLM 可能返回含 phone 的动作）
         if selfie_style == "standard" and hand_action:
             if _re.search(r"\b(phone|smartphone|mobile|device)\b", hand_action, flags=_re.IGNORECASE):
@@ -625,7 +721,7 @@ class SelfiePainterAction(BaseAction):
         final_prompt = ", ".join(prompt_parts)
 
         # 简单的去重处理（避免重复关键词）
-        keywords = [kw.strip() for kw in final_prompt.split(',')]
+        keywords = [kw.strip() for kw in final_prompt.split(",")]
         seen = set()
         unique_keywords = []
         for kw in keywords:
@@ -652,9 +748,43 @@ class SelfiePainterAction(BaseAction):
             negative_parts.append(ANTI_CAMERA_DEVICE_PROMPT)
         selfie_negative_prompt = ", ".join(negative_parts)
 
-        logger.info(f"{self.log_prefix} 自拍模式最终提示词: {final_prompt[:200]}...")
-        logger.info(f"{self.log_prefix} 自拍模式负面提示词: {selfie_negative_prompt[:150]}...")
+        self._log_prompt_trace(
+            positive_prompt=final_prompt,
+            negative_prompt=selfie_negative_prompt,
+            selfie_style=selfie_style,
+            default_preview_label="自拍模式最终提示词",
+        )
         return final_prompt, selfie_negative_prompt
+
+    def _should_show_all_prompts(self) -> bool:
+        """是否显示本次完整提示词。"""
+        return bool(
+            self.get_config("components.show_all_prompts", False)
+            or self.get_config("selfie.show_prompt_details", False)
+        )
+
+    def _log_prompt_trace(
+        self,
+        positive_prompt: str,
+        negative_prompt: Optional[str] = None,
+        selfie_style: Optional[str] = None,
+        default_preview_label: str = "本次生图提示词",
+    ) -> None:
+        """按开关决定记录完整提示词或截断预览日志。"""
+        if self._should_show_all_prompts():
+            if selfie_style:
+                normalized_style = normalize_selfie_style(selfie_style)
+                logger.info(
+                    f"{self.log_prefix} 自拍风格: {get_selfie_style_display_name(normalized_style)}（{normalized_style}）"
+                )
+            logger.info(f"{self.log_prefix} 正面提示词（完整）: {positive_prompt}")
+            if negative_prompt:
+                logger.info(f"{self.log_prefix} 负面提示词（完整）: {negative_prompt}")
+            return
+
+        logger.info(f"{self.log_prefix} {default_preview_label}: {positive_prompt[:100]}...")
+        if negative_prompt:
+            logger.info(f"{self.log_prefix} 自拍模式负面提示词: {negative_prompt[:150]}...")
 
     # ---- 风格专用手部动作池 ----
     # standard: 一只手举手机（画面外），只有另一只手空闲，仅单手动作
@@ -765,9 +895,9 @@ class SelfiePainterAction(BaseAction):
                 image_path = os.path.join(plugin_dir, image_path)
 
             if os.path.exists(image_path):
-                with open(image_path, 'rb') as f:
+                with open(image_path, "rb") as f:
                     image_data = f.read()
-                image_base64 = base64.b64encode(image_data).decode('utf-8')
+                image_base64 = base64.b64encode(image_data).decode("utf-8")
                 logger.info(f"{self.log_prefix} 从文件加载自拍参考图片: {image_path}")
                 return image_base64
             else:
@@ -837,18 +967,20 @@ class SelfiePainterAction(BaseAction):
         http_base_url = model_config.get("base_url")
         http_api_key = model_config.get("api_key")
         api_format = model_config.get("format", "openai")
-        
+
         # 检查base_url
         if not http_base_url:
             return False, "HTTP配置不完整"
-        
+
         # 检查api_key（comfyui格式允许为空）
         if api_format != "comfyui" and not http_api_key:
             return False, "HTTP配置不完整"
-        
+
         # API密钥验证（仅对需要api_key的格式）
-        if api_format != "comfyui" and isinstance(http_api_key, str) and (
-            "YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key
+        if (
+            api_format != "comfyui"
+            and isinstance(http_api_key, str)
+            and ("YOUR_API_KEY_HERE" in http_api_key or "xxxxxxxxxxxxxx" in http_api_key)
         ):
             return False, "API密钥未配置"
 
@@ -890,8 +1022,7 @@ class SelfiePainterAction(BaseAction):
 
         # 如果是 URL，下载并转为 base64
         return await resolve_image_data(
-            final_image_data, self._download_and_encode_base64,
-            f"{self.log_prefix} [image_only]"
+            final_image_data, self._download_and_encode_base64, f"{self.log_prefix} [image_only]"
         )
 
     def _extract_description_from_message(self) -> str:
@@ -902,7 +1033,7 @@ class SelfiePainterAction(BaseAction):
         """
         if not self.action_message:
             return ""
-            
+
         # 获取消息文本
         message_text = (
             self.action_message.processed_plain_text
@@ -910,58 +1041,58 @@ class SelfiePainterAction(BaseAction):
             or getattr(self.action_message, "raw_message", "")
             or ""
         ).strip()
-        
+
         if not message_text:
             return ""
-            
+
         import re
-        
+
         # 移除常见的画图相关前缀
         patterns_to_remove = [
-            r'^画',           # "画"
-            r'^绘制',         # "绘制"
-            r'^生成图片',     # "生成图片"
-            r'^画图',         # "画图"
-            r'^帮我画',       # "帮我画"
-            r'^请画',         # "请画"
-            r'^能不能画',     # "能不能画"
-            r'^可以画',       # "可以画"
-            r'^画一个',       # "画一个"
-            r'^画一只',       # "画一只"
-            r'^画张',         # "画张"
-            r'^画幅',         # "画幅"
-            r'^图[：:]',      # "图："或"图:"
-            r'^生成图片[：:]', # "生成图片："或"生成图片:"
-            r'^[：:]',        # 单独的冒号
-            r'^用\s*模型\s*\S+\s*',       # "用模型3" / "用 模型 abc"
-            r'^用\s*model\s*\S+\s*',      # "用model2" / "用 model abc"
+            r"^画",  # "画"
+            r"^绘制",  # "绘制"
+            r"^生成图片",  # "生成图片"
+            r"^画图",  # "画图"
+            r"^帮我画",  # "帮我画"
+            r"^请画",  # "请画"
+            r"^能不能画",  # "能不能画"
+            r"^可以画",  # "可以画"
+            r"^画一个",  # "画一个"
+            r"^画一只",  # "画一只"
+            r"^画张",  # "画张"
+            r"^画幅",  # "画幅"
+            r"^图[：:]",  # "图："或"图:"
+            r"^生成图片[：:]",  # "生成图片："或"生成图片:"
+            r"^[：:]",  # 单独的冒号
+            r"^用\s*模型\s*\S+\s*",  # "用模型3" / "用 模型 abc"
+            r"^用\s*model\s*\S+\s*",  # "用model2" / "用 model abc"
         ]
-        
+
         cleaned_text = message_text
         for pattern in patterns_to_remove:
-            cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
-        
+            cleaned_text = re.sub(pattern, "", cleaned_text, flags=re.IGNORECASE)
+
         # 移除常见的后缀
         suffix_patterns = [
-            r'图片$',         # "图片"
-            r'图$',           # "图"
-            r'一下$',         # "一下"
-            r'呗$',           # "呗"
-            r'吧$',           # "吧"
+            r"图片$",  # "图片"
+            r"图$",  # "图"
+            r"一下$",  # "一下"
+            r"呗$",  # "呗"
+            r"吧$",  # "吧"
         ]
-        
+
         for pattern in suffix_patterns:
-            cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
-        
+            cleaned_text = re.sub(pattern, "", cleaned_text, flags=re.IGNORECASE)
+
         # 清理空白字符
         cleaned_text = cleaned_text.strip()
-        
+
         # 如果清理后为空，返回原消息（可能是简单的描述）
         if not cleaned_text:
             cleaned_text = message_text
-            
+
         # 限制长度，避免过长的描述
         if len(cleaned_text) > 100:
             cleaned_text = cleaned_text[:100]
-            
+
         return cleaned_text

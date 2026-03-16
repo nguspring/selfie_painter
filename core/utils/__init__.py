@@ -6,6 +6,10 @@ from .shared_constants import (
     SELFIE_HAND_NEGATIVE,
     ANTI_DUAL_PHONE_PROMPT,
     ANTI_CAMERA_DEVICE_PROMPT,
+    VALID_SELFIE_STYLES,
+    SELFIE_STYLE_DISPLAY_NAMES,
+    normalize_selfie_style,
+    get_selfie_style_display_name,
 )
 from .model_utils import get_model_config, merge_negative_prompt, inject_llm_original_size
 from .image_utils import ImageProcessor
@@ -32,13 +36,17 @@ __all__ = [
     "CacheManager",
     "ImageProcessor",
     "PromptOptimizer",
+    "SELFIE_STYLE_DISPLAY_NAMES",
     "SELFIE_HAND_NEGATIVE",
+    "VALID_SELFIE_STYLES",
     "get_image_size",
     "get_image_size_async",
+    "get_selfie_style_display_name",
     "get_model_config",
     "inject_llm_original_size",
     "is_in_time_range",
     "merge_negative_prompt",
+    "normalize_selfie_style",
     "optimize_prompt",
     "parse_pixel_size",
     "pixel_size_to_gemini_aspect",

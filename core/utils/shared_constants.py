@@ -39,5 +39,35 @@ ANTI_CAMERA_DEVICE_PROMPT = (
     "smartphone in frame, camera in frame"
 )
 
+VALID_SELFIE_STYLES = {"standard", "mirror", "photo"}
+
+SELFIE_STYLE_DISPLAY_NAMES = {
+    "standard": "标准自拍",
+    "mirror": "对镜自拍",
+    "photo": "第三人称照片",
+}
+
+
+def normalize_selfie_style(style: object, fallback: str = "standard") -> str:
+    """标准化自拍风格值，异常值自动回退。"""
+    normalized_fallback = str(fallback).strip().lower()
+    if normalized_fallback not in VALID_SELFIE_STYLES:
+        normalized_fallback = "standard"
+
+    if style is None:
+        return normalized_fallback
+
+    normalized = str(style).strip().lower()
+    if normalized in VALID_SELFIE_STYLES:
+        return normalized
+    return normalized_fallback
+
+
+def get_selfie_style_display_name(style: object, fallback: str = "standard") -> str:
+    """返回自拍风格的中文显示名。"""
+    normalized = normalize_selfie_style(style, fallback)
+    return SELFIE_STYLE_DISPLAY_NAMES.get(normalized, SELFIE_STYLE_DISPLAY_NAMES["standard"])
+
+
 # 向后兼容别名
 ANTI_DUAL_HANDS_PROMPT = f"{SELFIE_HAND_NEGATIVE}, {ANTI_DUAL_PHONE_PROMPT}"

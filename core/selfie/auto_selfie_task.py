@@ -26,8 +26,7 @@ from .schedule_provider import get_schedule_provider
 from .scene_action_generator import convert_to_selfie_prompt, get_negative_prompt_for_style
 from .caption_generator import generate_caption
 from ..api_clients import generate_image_standalone
-from ..utils import get_model_config, is_in_time_range
-from ..wardrobe.selector import select_outfit_from_schedule
+from ..utils import get_model_config, normalize_selfie_style, get_selfie_style_display_name
 
 logger = get_logger("auto_selfie.task")
 
@@ -115,9 +114,7 @@ class AutoSelfieTask:
         now = time.time()
         elapsed = now - self._last_restart_ts
         if elapsed < self._RESTART_THROTTLE:
-            logger.error(
-                f"自拍循环在 {elapsed:.0f}s 内再次退出，跳过重启以防热循环"
-            )
+            logger.error(f"自拍循环在 {elapsed:.0f}s 内再次退出，跳过重启以防热循环")
             self.is_running = False
             return
 
@@ -289,9 +286,7 @@ class AutoSelfieTask:
                     break
                 except Exception as e:
                     self._consecutive_failures += 1
-                    logger.error(
-                        f"自拍执行出错 (连续第{self._consecutive_failures}次): {e}"
-                    )
+                    logger.error(f"自拍执行出错 (连续第{self._consecutive_failures}次): {e}")
                     # 简单退避：失败越多等越久，但不超过一个间隔
                     backoff = min(self._consecutive_failures * 60, interval_seconds)
                     logger.warning(f"退避等待 {backoff // 60} 分钟后重试")
@@ -303,9 +298,7 @@ class AutoSelfieTask:
                         await asyncio.sleep(chunk)
                         remaining -= chunk
                         if remaining > 0:
-                            logger.info(
-                                f"[自动自拍] 心跳: 退避中，剩余 {remaining / 60:.0f} 分钟"
-                            )
+                            logger.info(f"[自动自拍] 心跳: 退避中，剩余 {remaining / 60:.0f} 分钟")
                     continue  # 退避后直接回到循环顶部，不再叠加 POLL_INTERVAL
 
                 await asyncio.sleep(self._POLL_INTERVAL)
@@ -335,7 +328,6 @@ class AutoSelfieTask:
         else:
             logger.info("[自动自拍] 心跳: 运行中，等待首次自拍时机")
 
-
     async def _execute_selfie(self):
         """执行一次完整的自拍流程"""
         logger.info("开始执行自动自拍流程...")
@@ -347,7 +339,7 @@ class AutoSelfieTask:
         logger.info(f"当前活动: {activity.description} ({activity.activity_type.value})")
 
         # 2. 生成自拍提示词
-        selfie_style = self.get_config("selfie.default_style", "standard")
+        selfie_style = normalize_selfie_style(self.get_config("selfie.default_style", "standard"))
         bot_appearance = self.get_config("selfie.prompt_prefix", "")
         try:
             wardrobe_enabled = self.get_config("wardrobe.enabled", False)
@@ -387,6 +379,7 @@ class AutoSelfieTask:
             self.get_config("selfie.negative_prompt", ""),
         )
 
+        logger.info(f"自动自拍风格: {get_selfie_style_display_name(selfie_style)}（{selfie_style}）")
         logger.info(f"自拍提示词: {prompt[:100]}...")
 
         # 3. 生成图片

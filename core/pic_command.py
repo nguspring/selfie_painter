@@ -17,6 +17,8 @@ from .utils import (
     inject_llm_original_size,
     resolve_image_data,
     schedule_auto_recall,
+    normalize_selfie_style,
+    get_selfie_style_display_name,
 )
 
 logger = get_logger("mais_art.command")
@@ -100,6 +102,7 @@ class PicCommandMixin:
         weight = float(self.get_config("search_reference.feature_boost_weight", 1.25) or 1.25)
         weight = max(1.0, min(2.0, weight))
         return f"{content}, ({features}:{weight})"
+
 
 class PicGenerationCommand(PicCommandMixin, BaseCommand):
     """图生图Command组件，支持通过命令进行图生图，可选择特定模型"""
@@ -233,7 +236,7 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
             max_retries = self.get_config("components.max_retries", 2)
 
             # 对于 Gemini/Zai 格式，将原始 LLM 尺寸添加到 model_config 中
-            model_config = inject_llm_original_size(model_config, llm_original_size)
+            model_config = inject_llm_original_size(model_config, llm_original_size or "")
 
             # 调用API客户端生成图片
             api_client = ApiClient(self)
@@ -374,7 +377,7 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
             max_retries = self.get_config("components.max_retries", 2)
 
             # 对于 Gemini/Zai 格式，将原始 LLM 尺寸添加到 model_config 中
-            model_config = inject_llm_original_size(model_config, llm_original_size)
+            model_config = inject_llm_original_size(model_config, llm_original_size or "")
 
             # 调用API客户端生成图片
             api_client = ApiClient(self)
@@ -481,13 +484,13 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
 
     def _download_and_encode_base64(self, image_url: str) -> Tuple[bool, str]:
         """下载图片并转换为base64编码（委托给 ImageProcessor）"""
-        proxy_url = None
+        proxy_url = ""
         if self.get_config("proxy.enabled", False):
-            proxy_url = self.get_config("proxy.url", "http://127.0.0.1:7890")
+            proxy_url = str(self.get_config("proxy.url", "http://127.0.0.1:7890") or "")
         return self.image_processor.download_and_encode_base64(image_url, proxy_url=proxy_url)
 
     async def _schedule_auto_recall_for_recent_message(
-        self, model_config: Dict[str, Any] = None, model_id: str = None, send_timestamp: float = 0.0
+        self, model_config: Optional[Dict[str, Any]] = None, model_id: Optional[str] = None, send_timestamp: float = 0.0
     ):
         """安排最近发送消息的自动撤回"""
         global_enabled = self.get_config("auto_recall.enabled", False)
@@ -537,7 +540,19 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             return False, "无法获取chat_id", True
 
         # 需要管理员权限的操作
-        admin_only_actions = ["set", "reset", "on", "off", "model", "recall", "default", "selfie", "refresh", "clear", "status"]
+        admin_only_actions = [
+            "set",
+            "reset",
+            "on",
+            "off",
+            "model",
+            "recall",
+            "default",
+            "selfie",
+            "refresh",
+            "clear",
+            "status",
+        ]
         if not has_permission and action in admin_only_actions:
             await self.send_text("你无权使用此命令", storage_message=False)
             return False, "没有权限", True
@@ -875,12 +890,13 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
                 return True, f"自拍日程增强{status}成功", True
 
             # /dr selfie standard|mirror|photo → 切换自拍风格
-            valid_styles = {"standard", "mirror", "photo"}
-            if action in valid_styles:
-                runtime_state.set_selfie_style(chat_id, action)
-                style_names = {"standard": "标准自拍", "mirror": "对镜自拍", "photo": "第三人称照片"}
-                await self.send_text(f"自拍风格已切换为: {style_names[action]}（{action}）")
-                return True, f"自拍风格切换为{action}", True
+            normalized_style = normalize_selfie_style(action, "")
+            if normalized_style:
+                runtime_state.set_selfie_style(chat_id, normalized_style)
+                await self.send_text(
+                    f"自拍风格已切换为: {get_selfie_style_display_name(normalized_style)}（{normalized_style}）"
+                )
+                return True, f"自拍风格切换为{normalized_style}", True
 
             await self.send_text("格式：/dr selfie on|off（日程增强）或 /dr selfie standard|mirror|photo（自拍风格）")
             return False, "参数无效", True
@@ -939,6 +955,7 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
         )
         await self.send_text(message)
         return True, "status ok", True
+
 
 class PicStyleCommand(PicCommandMixin, BaseCommand):
     """图片风格管理命令"""
