@@ -43,7 +43,7 @@ class SelfiePainterV2Plugin(BasePlugin):
 
     # 插件基本信息
     plugin_name = "selfie_painter_v2"
-    plugin_version = "3.6.2"
+    plugin_version = "3.6.3"
     plugin_author = "Ptrel，Rabbit，saberlights Kiuon，nguspring"
     enable_plugin = True
     dependencies: List[str] = []
@@ -86,7 +86,7 @@ class SelfiePainterV2Plugin(BasePlugin):
         "selfie": ConfigSection(title="自拍模式配置", icon="camera", order=6),
         "wardrobe": ConfigSection(
             title="衣柜系统",
-            description="管理“穿搭(Outfit)”的配置入口：你可以在这里添加多套衣服标签，并为不同活动类型设置偏好权重（本任务仅新增配置与 WebUI 编辑入口，暂不接入自拍提示词）",
+            description="管理“穿搭(Outfit)”的配置入口：你可以在这里添加多套衣服标签，并让自拍根据日程活动自动注入合适的服装提示词；中文穿搭会优先映射或翻译成英文标签后再注入",
             icon="shirt",
             order=11,
         ),
@@ -178,7 +178,7 @@ class SelfiePainterV2Plugin(BasePlugin):
                 order=1,
             ),
             "config_version": ConfigField(
-                type=str, default="3.6.2", description="插件配置版本号", label="配置版本", disabled=True, order=2
+                type=str, default="3.6.3", description="插件配置版本号", label="配置版本", disabled=True, order=2
             ),
             "enabled": ConfigField(
                 type=bool,
