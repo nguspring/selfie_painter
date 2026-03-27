@@ -264,6 +264,10 @@ enabled = true
 [generation]
 default_model = "model1"          # Action 组件默认使用的模型 ID
 
+[access_control]
+mode = "blacklist"                # 全局访问模式：blacklist=默认全允许，名单内禁用；whitelist=仅名单内允许
+list = ["qq:1919810:group"]       # 聊天流格式：qq:群号:group / qq:QQ号:private
+
 [components]
 enable_unified_generation = true  # 启用智能生图 Action
 enable_pic_command = true         # 启用 /dr 图片生成命令
@@ -294,7 +298,31 @@ custom_prompt_add = ", best quality"       # 追加正面提示词
 negative_prompt_add = "lowres, bad anatomy" # 追加负面提示词
 support_img2img = true
 auto_recall_delay = 0                      # 自动撤回延时（秒），0=不撤回
+access_mode = "blacklist"                 # 模型访问模式：默认黑名单
+access_list = ["qq:114514:private"]       # 该模型自己的聊天流名单
 ```
+
+### 聊天流黑白名单
+
+```toml
+[access_control]
+mode = "blacklist"
+list = [
+  "qq:1919810:group",   # 禁用某个群
+  "qq:114514:private"   # 禁用某个私聊
+]
+
+[models.model1]
+access_mode = "whitelist"
+access_list = [
+  "qq:1919810:group",
+  "qq:114514:private"
+]
+```
+
+- **全局规则**先判断，再判断**模型单独规则**；两边都允许，这个聊天流才能使用该模型。
+- 默认都是 **blacklist**，所以如果列表留空，就是**默认所有聊天流都可用**。
+- 支持的聊天流格式：`qq:群号:group`、`qq:QQ号:private`。
 
 ### 自拍配置
 
