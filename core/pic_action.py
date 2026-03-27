@@ -28,6 +28,7 @@ from .utils import (
     optimize_prompt,
     normalize_selfie_style,
     get_selfie_style_display_name,
+    is_chat_allowed_for_model,
 )
 
 logger = get_logger("selfie_painter")
@@ -224,6 +225,11 @@ class SelfiePainterAction(BaseAction):
             logger.warning(f"{self.log_prefix} 模型 {model_id} 在当前聊天流已禁用")
             await self.send_text(f"模型 {model_id} 当前不可用")
             return False, f"模型 {model_id} 已禁用"
+
+        if not is_chat_allowed_for_model(self.get_config, self.chat_id, model_id):
+            logger.warning(f"{self.log_prefix} 模型 {model_id} 被聊天流访问规则拒绝: {self.chat_id}")
+            await self.send_text(f"模型 {model_id} 当前聊天流不可用")
+            return False, f"模型 {model_id} 被访问规则拒绝"
 
         # 参数验证和后备提取
         if not description:
@@ -814,10 +820,7 @@ class SelfiePainterAction(BaseAction):
 
     def _should_show_all_prompts(self) -> bool:
         """是否显示本次完整提示词。"""
-        return bool(
-            self.get_config("components.show_all_prompts", False)
-            or self.get_config("selfie.show_prompt_details", False)
-        )
+        return bool(self.get_config("components.show_all_prompts", False))
 
     def _log_prompt_trace(
         self,

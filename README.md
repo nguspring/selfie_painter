@@ -5,16 +5,16 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.6.3-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.6.4-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
 
 ---
 
-> 🚀 **从 v3.5.x 升级到 v3.6.3？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v363)。
+> 🚀 **从 v3.5.x 升级到 v3.6.4？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v364)。
 
-> ✨ **v3.6.3 修复**：梦羽 AI 自拍在衣柜系统选中中文穿搭时，会先转换为英文提示词再注入自拍 prompt，避免中文服装标签直接进入 SD 提示词导致的出图失败。
+> ✨ **v3.6.4 修复**：`openai-chat` 接口新增兼容七牛云 `gemini-3.1-flash-image-preview` 的图片返回结构，支持从 `message.images[].image_url.url` 以及对应 SSE 流式 chunk 中提取图片数据。
 
 ---
 
@@ -24,21 +24,21 @@
 >
 > 1. 最初基于原版 [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) 修改，发布为 `selfie_painter`（v3.4.x ~ v3.5.x）
 > 2. 原作者后来将 custom_pic_plugin 升级重构为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)（v3.4.0）
-> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.3）
+> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.4）
 >
 > | 项目 | 链接 |
 > |------|------|
 > | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
 > | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.6.3 |
+> | 当前版本 | v3.6.4 |
 >
 > **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
 
 ---
 
-## 🔄 从 v3.5.x 升级到 v3.6.3
+## 🔄 从 v3.5.x 升级到 v3.6.4
 
-v3.6.3 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
+v3.6.4 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
 
 **请删除旧版插件目录后重新安装：**
 
@@ -264,6 +264,10 @@ enabled = true
 [generation]
 default_model = "model1"          # Action 组件默认使用的模型 ID
 
+[access_control]
+mode = "blacklist"                # 全局访问模式：blacklist=默认全允许，名单内禁用；whitelist=仅名单内允许
+list = ["qq:1919810:group"]       # 聊天流格式：qq:群号:group / qq:QQ号:private
+
 [components]
 enable_unified_generation = true  # 启用智能生图 Action
 enable_pic_command = true         # 启用 /dr 图片生成命令
@@ -294,7 +298,31 @@ custom_prompt_add = ", best quality"       # 追加正面提示词
 negative_prompt_add = "lowres, bad anatomy" # 追加负面提示词
 support_img2img = true
 auto_recall_delay = 0                      # 自动撤回延时（秒），0=不撤回
+access_mode = "blacklist"                 # 模型访问模式：默认黑名单
+access_list = ["qq:114514:private"]       # 该模型自己的聊天流名单
 ```
+
+### 聊天流黑白名单
+
+```toml
+[access_control]
+mode = "blacklist"
+list = [
+  "qq:1919810:group",   # 禁用某个群
+  "qq:114514:private"   # 禁用某个私聊
+]
+
+[models.model1]
+access_mode = "whitelist"
+access_list = [
+  "qq:1919810:group",
+  "qq:114514:private"
+]
+```
+
+- **全局规则**先判断，再判断**模型单独规则**；两边都允许，这个聊天流才能使用该模型。
+- 默认都是 **blacklist**，所以如果列表留空，就是**默认所有聊天流都可用**。
+- 支持的聊天流格式：`qq:群号:group`、`qq:QQ号:private`。
 
 ### 自拍配置
 
@@ -470,6 +498,13 @@ num_inference_steps = 30
 ---
 
 ## 📝 更新日志
+
+### v3.6.4 (改版) — 2026-03-24
+
+- 🔧 修复 `openai-chat` 在七牛云 `gemini-3.1-flash-image-preview` 下的生图解析兼容性
+- 🔧 新增对 `choices[0].message.images[].image_url.url` 返回结构的提取支持
+- 🔧 新增对 SSE 流式响应最终 chunk 中图片字段的提取支持，避免误报“未找到图片数据”
+- 📝 统一插件元数据、配置版本与文档版本号到 3.6.4
 
 ### v3.6.2 (改版) — 2026-03-16
 

@@ -26,6 +26,8 @@ custom_prompt_add = ", "
 negative_prompt_add = ""
 support_img2img = false
 auto_recall_delay = 0
+access_mode = "blacklist"
+access_list = []
 
 # ============================================================
 # 模型2：FLUX.1-schnell 快速生图
@@ -47,6 +49,8 @@ custom_prompt_add = ", "
 negative_prompt_add = ""
 support_img2img = false
 auto_recall_delay = 0
+access_mode = "blacklist"
+access_list = []
 
 # ============================================================
 # 模型3：Kolors 可图
@@ -68,6 +72,8 @@ custom_prompt_add = ", "
 negative_prompt_add = ""
 support_img2img = false
 auto_recall_delay = 0
+access_mode = "blacklist"
+access_list = []
 
 # ============================================================
 # 模型4：Stable Diffusion 3.5 Large
@@ -89,6 +95,8 @@ custom_prompt_add = ", "
 negative_prompt_add = ""
 support_img2img = false
 auto_recall_delay = 0
+access_mode = "blacklist"
+access_list = []
 
 # ============================================================
 # 模型5：潦草风格模型
@@ -110,6 +118,8 @@ custom_prompt_add = ", "
 negative_prompt_add = ""
 support_img2img = false
 auto_recall_delay = 0
+access_mode = "blacklist"
+access_list = []
 
 # ============================================================
 # 模型6：Qwen-Image-Edit 图片编辑
@@ -131,6 +141,8 @@ custom_prompt_add = ", "
 negative_prompt_add = ""
 support_img2img = false
 auto_recall_delay = 0
+access_mode = "blacklist"
+access_list = []
 
 # ============================================================
 # 模型7：SDXL 1.0
@@ -152,3 +164,5 @@ custom_prompt_add = ", "
 negative_prompt_add = ""
 support_img2img = false
 auto_recall_delay = 0
+access_mode = "blacklist"
+access_list = []
