@@ -114,6 +114,35 @@ class PicCommandMixin(BaseCommand):
         weight = max(1.0, min(2.0, weight))
         return f"{content}, ({features}:{weight})"
 
+    def _get_prompt_optimizer_timing(self) -> str:
+        """获取提示词优化器执行时机。"""
+        timing_raw: Any = self.get_config("prompt_optimizer.execution_timing", "before")
+        if isinstance(timing_raw, str):
+            timing: str = timing_raw.strip().lower()
+            if timing in {"before", "after"}:
+                return timing
+        return "before"
+
+    async def _optimize_generation_prompt(self, description: str) -> str:
+        """按当前配置优化普通生图提示词，失败时回退原文。"""
+        logger.info(f"{self.log_prefix} 开始优化提示词...")
+        custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
+        custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
+        custom_model: str = str(self.get_config("prompt_optimizer.custom_api_model", ""))
+        success, optimized_prompt = await optimize_prompt(
+            description,
+            self.log_prefix,
+            custom_api_base_url=custom_base_url,
+            custom_api_key=custom_api_key,
+            custom_api_model=custom_model,
+        )
+        if success:
+            logger.info(f"{self.log_prefix} 提示词优化完成: {optimized_prompt[:80]}...")
+            return optimized_prompt
+
+        logger.warning(f"{self.log_prefix} 提示词优化失败，使用原始描述")
+        return description
+
 
 class PicGenerationCommand(PicCommandMixin):
     """图生图Command组件，支持通过命令进行图生图，可选择特定模型"""
@@ -369,28 +398,16 @@ class PicGenerationCommand(PicCommandMixin):
         logger.info(f"{self.log_prefix} 自然语言模式使用{mode_text}")
 
         # 提示词优化
-        optimizer_enabled = self.get_config("prompt_optimizer.enabled", True)
-        if optimizer_enabled:
-            logger.info(f"{self.log_prefix} 开始优化提示词...")
-            # 读取自定义 API 配置
-            custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
-            custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
-            custom_model: str = str(self.get_config("prompt_optimizer.custom_api_model", ""))
-            success, optimized_prompt = await optimize_prompt(
-                description,
-                self.log_prefix,
-                custom_api_base_url=custom_base_url,
-                custom_api_key=custom_api_key,
-                custom_api_model=custom_model,
-            )
-            if success:
-                logger.info(f"{self.log_prefix} 提示词优化完成: {optimized_prompt[:80]}...")
-                description = optimized_prompt
-            else:
-                logger.warning(f"{self.log_prefix} 提示词优化失败，使用原始描述")
+        optimizer_enabled = bool(self.get_config("prompt_optimizer.enabled", True))
+        optimizer_timing = self._get_prompt_optimizer_timing()
+        if optimizer_enabled and optimizer_timing == "before":
+            description = await self._optimize_generation_prompt(description)
 
         # 注入角色参考特征（在优化后、尺寸计算前）
         description = self._inject_role_features(description)
+
+        if optimizer_enabled and optimizer_timing == "after":
+            description = await self._optimize_generation_prompt(description)
 
         # 使用统一的尺寸处理逻辑（异步版本，支持 LLM 选择尺寸）
         image_size, llm_original_size = await get_image_size_async(model_config, description, None, self.log_prefix)

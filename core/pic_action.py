@@ -156,6 +156,37 @@ class SelfiePainterAction(BaseAction):
         self.cache_manager = CacheManager(self)
         self._api_clients = {}  # 缓存不同格式的API客户端
 
+    def _get_prompt_optimizer_timing(self) -> str:
+        """获取提示词优化器执行时机。"""
+        timing_raw: object = self.get_config("prompt_optimizer.execution_timing", "before")
+        if isinstance(timing_raw, str):
+            timing: str = timing_raw.strip().lower()
+            if timing in {"before", "after"}:
+                return timing
+        return "before"
+
+    async def _optimize_generation_prompt(self, description: str, scene_only: bool) -> str:
+        """按当前配置优化提示词，失败时回退原文。"""
+        mode_label = "场景提示词" if scene_only else "提示词"
+        logger.info(f"{self.log_prefix} 开始优化{mode_label}: {description[:50]}...")
+        custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
+        custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
+        custom_model: str = str(self.get_config("prompt_optimizer.custom_api_model", ""))
+        success, optimized_prompt = await optimize_prompt(
+            description,
+            self.log_prefix,
+            scene_only=scene_only,
+            custom_api_base_url=custom_base_url,
+            custom_api_key=custom_api_key,
+            custom_api_model=custom_model,
+        )
+        if success:
+            logger.info(f"{self.log_prefix} {mode_label}优化完成: {optimized_prompt[:80]}...")
+            return optimized_prompt
+
+        logger.warning(f"{self.log_prefix} {mode_label}优化失败，使用原始描述: {description[:50]}...")
+        return description
+
     def _get_api_client(self, api_format: str):
         """获取指定格式的API客户端（带缓存）"""
         if api_format not in self._api_clients:
@@ -250,27 +281,9 @@ class SelfiePainterAction(BaseAction):
 
         # 提示词优化（自拍模式仅优化场景/环境，不生成角色外观）
         optimizer_enabled: bool = bool(self.get_config("prompt_optimizer.enabled", True))
-        if optimizer_enabled:
-            scene_only = bool(selfie_mode)
-            mode_label = "场景提示词" if scene_only else "提示词"
-            logger.info(f"{self.log_prefix} 开始优化{mode_label}: {description[:50]}...")
-            # 读取自定义 API 配置
-            custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
-            custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
-            custom_model: str = str(self.get_config("prompt_optimizer.custom_api_model", ""))
-            success, optimized_prompt = await optimize_prompt(
-                description,
-                self.log_prefix,
-                scene_only=scene_only,
-                custom_api_base_url=custom_base_url,
-                custom_api_key=custom_api_key,
-                custom_api_model=custom_model,
-            )
-            if success:
-                logger.info(f"{self.log_prefix} {mode_label}优化完成: {optimized_prompt[:80]}...")
-                description = optimized_prompt
-            else:
-                logger.warning(f"{self.log_prefix} {mode_label}优化失败，使用原始描述: {description[:50]}...")
+        optimizer_timing: str = self._get_prompt_optimizer_timing()
+        if optimizer_enabled and optimizer_timing == "before":
+            description = await self._optimize_generation_prompt(description, scene_only=bool(selfie_mode))
 
         # 验证strength参数
         try:
@@ -315,6 +328,8 @@ class SelfiePainterAction(BaseAction):
             description, selfie_negative_prompt = await self._process_selfie_prompt(
                 description, selfie_style, free_hand_action, model_id, activity_scene
             )
+            if optimizer_enabled and optimizer_timing == "after":
+                description = await self._optimize_generation_prompt(description, scene_only=False)
             self._log_prompt_trace(
                 positive_prompt=description,
                 negative_prompt=selfie_negative_prompt,
@@ -343,6 +358,9 @@ class SelfiePainterAction(BaseAction):
 
         # 收集自拍模式的额外负面提示词（如果启用了自拍模式）
         extra_neg = selfie_negative_prompt if selfie_mode else None
+
+        if optimizer_enabled and optimizer_timing == "after" and not selfie_mode:
+            description = await self._optimize_generation_prompt(description, scene_only=False)
 
         # **智能检测：判断是文生图还是图生图**
         input_image_base64 = await self.image_processor.get_recent_image()
