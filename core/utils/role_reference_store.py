@@ -71,7 +71,7 @@ class RoleReferenceStore:
         if plugin_dir:
             return plugin_dir
         if plugin_instance and hasattr(plugin_instance, "plugin_dir"):
-            value = getattr(plugin_instance, "plugin_dir")
+            value = plugin_instance.plugin_dir
             if isinstance(value, str) and value:
                 return value
         # 回退：假设当前文件在 core/utils/ 目录

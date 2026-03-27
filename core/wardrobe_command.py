@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from src.plugin_system.base.base_command import BaseCommand
 
@@ -214,22 +213,23 @@ class WardrobeCommand(BaseCommand):
         """管理员：临时更换今日穿搭（持久化到数据库，当天有效）"""
         outfit: str = (arg or "").strip()
         if not outfit:
-            await self.send_text("\n".join([
-                "用法：/dr wardrobe wear <衣服描述>",
-                "示例：/dr wardrobe wear 黑丝JK",
-                "",
-                "设置后今天所有自拍都会使用该穿搭，次日自动重置。",
-            ]))
+            await self.send_text(
+                "\n".join(
+                    [
+                        "用法：/dr wardrobe wear <衣服描述>",
+                        "示例：/dr wardrobe wear 黑丝JK",
+                        "",
+                        "设置后今天所有自拍都会使用该穿搭，次日自动重置。",
+                    ]
+                )
+            )
             return False, "缺少衣服描述", intercept
 
         try:
             from .wardrobe.selector import save_temp_override
 
             await save_temp_override(outfit)
-            await self.send_text(
-                f"✅ 已设置今日临时穿搭：{outfit}\n"
-                f"（今日所有自拍将优先使用此穿搭，次日自动重置）"
-            )
+            await self.send_text(f"✅ 已设置今日临时穿搭：{outfit}\n（今日所有自拍将优先使用此穿搭，次日自动重置）")
             return True, "wear", intercept
         except Exception as exc:
             logger.error("Wardrobe wear failed: %r", exc, exc_info=True)
