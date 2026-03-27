@@ -16,17 +16,24 @@
 import asyncio
 import base64
 import datetime
+from importlib import import_module
 import os
 import time
 from typing import Any, Optional
 
-from src.common.logger import get_logger
+from src.common.logger import get_logger  # pyright: ignore[reportMissingImports]
 
 from .schedule_provider import get_schedule_provider
 from .scene_action_generator import convert_to_selfie_prompt, get_negative_prompt_for_style
 from .caption_generator import generate_caption
 from ..api_clients import generate_image_standalone
-from ..utils import get_model_config, normalize_selfie_style, get_selfie_style_display_name
+from ..utils import (
+    get_model_config,
+    normalize_selfie_style,
+    get_selfie_style_display_name,
+    build_target_context_id,
+    is_chat_allowed_for_model,
+)
 
 logger = get_logger("auto_selfie.task")
 
@@ -67,7 +74,7 @@ class AutoSelfieTask:
         """
         self.plugin = plugin
         self.is_running: bool = False
-        self.task: Optional[asyncio.Task] = None
+        self.task: Optional[asyncio.Task[None]] = None
         self._consecutive_failures: int = 0
         self._last_selfie_ts: Optional[float] = None  # 上次成功自拍的 Unix 时间戳
         self._last_restart_ts: float = 0.0  # 上次自动重启的时间戳
@@ -105,7 +112,7 @@ class AutoSelfieTask:
                 pass
         logger.info("自动自拍任务已停止")
 
-    def _on_task_done(self, task: asyncio.Task) -> None:
+    def _on_task_done(self, task: asyncio.Task[None]) -> None:
         """任务结束回调：is_running 仍为 True 说明是意外退出，自动重启（带节流）"""
         if not self.is_running:
             return
@@ -445,10 +452,15 @@ class AutoSelfieTask:
         # 5a. 发布到 QQ 空间
         if send_to_qzone:
             try:
-                from plugins.Maizone.qzone import create_qzone_api
-                from plugins.Maizone.helpers import get_napcat_config_and_renew
-                from src.plugin_system.core import component_registry
-                from src.plugin_system.apis import config_api
+                qzone_module = import_module("plugins.Maizone.qzone")
+                helpers_module = import_module("plugins.Maizone.helpers")
+                plugin_core_module = import_module("src.plugin_system.core")
+                plugin_apis_module = import_module("src.plugin_system.apis")
+
+                create_qzone_api = qzone_module.create_qzone_api
+                get_napcat_config_and_renew = helpers_module.get_napcat_config_and_renew
+                component_registry = plugin_core_module.component_registry
+                config_api = plugin_apis_module.config_api
 
                 # 刷新 Cookie
                 maizone_cfg = component_registry.get_plugin_config("MaizonePlugin")
@@ -481,7 +493,8 @@ class AutoSelfieTask:
             try:
                 # 主动从数据库加载所有历史聊天流，确保即使长时间无互动也能找到目标
                 try:
-                    from src.chat.chat_stream import get_chat_manager
+                    chat_stream_module = import_module("src.chat.chat_stream")
+                    get_chat_manager = chat_stream_module.get_chat_manager
 
                     chat_manager = get_chat_manager()
                     if hasattr(chat_manager, "load_all_streams"):
@@ -490,8 +503,10 @@ class AutoSelfieTask:
                 except Exception as e:
                     logger.warning(f"[SelfiePainterV2] 加载历史聊天流失败（仅使用内存中的活跃流）: {e}")
 
-                from src.plugin_system import chat_api
-                from src.plugin_system.apis import send_api
+                plugin_system_module = import_module("src.plugin_system")
+                plugin_apis_module = import_module("src.plugin_system.apis")
+                chat_api = plugin_system_module.chat_api
+                send_api = plugin_apis_module.send_api
                 import base64
 
                 # 图片转 base64
@@ -503,6 +518,12 @@ class AutoSelfieTask:
                 # 发送到目标群聊
                 for group_id in target_groups:
                     try:
+                        group_stream_id = build_target_context_id(group_id, "group")
+                        if group_stream_id and not is_chat_allowed_for_model(
+                            self.get_config, group_stream_id, selfie_model
+                        ):
+                            logger.info(f"[SelfiePainterV2] 群 {group_id} 被模型 {selfie_model} 的访问规则跳过")
+                            continue
                         stream = chat_api.get_stream_by_group_id(str(group_id))
                         if stream:
                             await send_api.image_to_stream(image_b64, stream.stream_id)
@@ -517,6 +538,12 @@ class AutoSelfieTask:
                 # 发送到目标私聊
                 for user_id in target_users:
                     try:
+                        user_stream_id = build_target_context_id(user_id, "private")
+                        if user_stream_id and not is_chat_allowed_for_model(
+                            self.get_config, user_stream_id, selfie_model
+                        ):
+                            logger.info(f"[SelfiePainterV2] 用户 {user_id} 被模型 {selfie_model} 的访问规则跳过")
+                            continue
                         stream = chat_api.get_stream_by_user_id(str(user_id))
                         if stream:
                             await send_api.image_to_stream(image_b64, stream.stream_id)
@@ -542,7 +569,7 @@ class AutoSelfieTask:
             except Exception as e:
                 logger.warning(f"持久化自拍时间戳失败: {e}")
 
-    def _get_model_config(self, model_id: str) -> Optional[dict]:
+    def _get_model_config(self, model_id: str) -> Optional[dict[str, Any]]:
         """获取模型配置"""
         return get_model_config(self.get_config, model_id, log_prefix="[AutoSelfie]")
 

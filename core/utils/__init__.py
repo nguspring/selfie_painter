@@ -27,6 +27,7 @@ from .recall_utils import schedule_auto_recall
 from .prompt_optimizer import PromptOptimizer, optimize_prompt
 from .runtime_state import runtime_state
 from .role_reference_store import RoleReferenceStore
+from .access_control import build_target_context_id, describe_access_rule, is_chat_allowed_for_model
 
 __all__ = [
     "ANTI_DUAL_HANDS_PROMPT",
@@ -54,6 +55,9 @@ __all__ = [
     "runtime_state",
     "schedule_auto_recall",
     "RoleReferenceStore",
+    "build_target_context_id",
+    "describe_access_rule",
+    "is_chat_allowed_for_model",
     "to_minutes",
     "validate_image_size",
 ]

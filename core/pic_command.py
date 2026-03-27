@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import os
 import re
 import time as time_module
-from typing import Tuple, Optional, Dict, Any
+from typing import Any, Dict, Optional, Tuple
 
-from src.plugin_system.base.base_command import BaseCommand
-from src.common.logger import get_logger
+from src.plugin_system.base.base_command import BaseCommand  # pyright: ignore[reportMissingImports]
+from src.common.logger import get_logger  # pyright: ignore[reportMissingImports]
 
 from .api_clients import ApiClient
 from .utils import (
@@ -19,12 +21,14 @@ from .utils import (
     schedule_auto_recall,
     normalize_selfie_style,
     get_selfie_style_display_name,
+    is_chat_allowed_for_model,
+    describe_access_rule,
 )
 
 logger = get_logger("mais_art.command")
 
 
-class PicCommandMixin:
+class PicCommandMixin(BaseCommand):
     """公共方法混入，供 PicGenerationCommand / PicConfigCommand / PicStyleCommand 共用"""
 
     def _get_chat_id(self) -> Optional[str]:
@@ -39,7 +43,10 @@ class PicCommandMixin:
     def _check_permission(self) -> bool:
         """检查用户权限"""
         try:
-            admin_users = self.get_config("components.admin_users", [])
+            admin_users_raw: Any = self.get_config("components.admin_users", [])
+            admin_users: list[str] = (
+                [str(user_id) for user_id in admin_users_raw] if isinstance(admin_users_raw, list) else []
+            )
             user_id = (
                 str(self.message.message_info.user_info.user_id)
                 if self.message and self.message.message_info and self.message.message_info.user_info
@@ -71,7 +78,7 @@ class PicCommandMixin:
             return style_name
 
     @staticmethod
-    def _create_role_reference_store(command: "BaseCommand") -> "RoleReferenceStore":
+    def _create_role_reference_store(command: BaseCommand) -> "RoleReferenceStore":
         """创建角色参考图存储实例"""
         plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         return RoleReferenceStore(plugin_dir=plugin_dir, config_getter=command.get_config)
@@ -99,12 +106,16 @@ class PicCommandMixin:
         if not features:
             return content
 
-        weight = float(self.get_config("search_reference.feature_boost_weight", 1.25) or 1.25)
+        weight_raw: Any = self.get_config("search_reference.feature_boost_weight", 1.25)
+        try:
+            weight = float(weight_raw or 1.25)
+        except (TypeError, ValueError):
+            weight = 1.25
         weight = max(1.0, min(2.0, weight))
         return f"{content}, ({features}:{weight})"
 
 
-class PicGenerationCommand(PicCommandMixin, BaseCommand):
+class PicGenerationCommand(PicCommandMixin):
     """图生图Command组件，支持通过命令进行图生图，可选择特定模型"""
 
     # Command基本信息
@@ -135,7 +146,7 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
             return False, "无法获取chat_id", True
 
         # 检查插件是否在当前聊天流启用
-        global_enabled = self.get_config("plugin.enabled", True)
+        global_enabled: bool = bool(self.get_config("plugin.enabled", True))
         if not runtime_state.is_plugin_enabled(chat_id, global_enabled):
             logger.info(f"{self.log_prefix} 插件在当前聊天流已禁用")
             return False, "插件已禁用", True
@@ -186,7 +197,10 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
         chat_id = self._get_chat_id()
 
         # 从运行时状态获取Command组件使用的模型
-        global_command_model = self.get_config("components.pic_command_model", "model1")
+        global_command_raw: Any = self.get_config("components.pic_command_model", "model1")
+        global_command_model: str = (
+            global_command_raw if isinstance(global_command_raw, str) and global_command_raw else "model1"
+        )
         model_id = (
             runtime_state.get_command_default_model(chat_id, global_command_model) if chat_id else global_command_model
         )
@@ -195,6 +209,10 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
         if chat_id and not runtime_state.is_model_enabled(chat_id, model_id):
             await self.send_text(f"模型 {model_id} 当前不可用")
             return False, f"模型 {model_id} 已禁用", True
+
+        if chat_id and not is_chat_allowed_for_model(self.get_config, chat_id, model_id):
+            await self.send_text(f"模型 {model_id} 当前聊天流不可用")
+            return False, f"模型 {model_id} 被访问规则拒绝", True
 
         # 获取模型配置
         model_config = self._get_model_config(model_id)
@@ -233,7 +251,8 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
 
         try:
             # 获取重试次数配置
-            max_retries = self.get_config("components.max_retries", 2)
+            max_retries_raw: Any = self.get_config("components.max_retries", 2)
+            max_retries: int = max_retries_raw if isinstance(max_retries_raw, int) else 2
 
             # 对于 Gemini/Zai 格式，将原始 LLM 尺寸添加到 model_config 中
             model_config = inject_llm_original_size(model_config, llm_original_size or "")
@@ -303,7 +322,10 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
             logger.info(f"{self.log_prefix} 从描述中提取模型ID: {model_id}")
         else:
             # 从运行时状态获取默认模型
-            global_command_model = self.get_config("components.pic_command_model", "model1")
+            global_command_raw: Any = self.get_config("components.pic_command_model", "model1")
+            global_command_model: str = (
+                global_command_raw if isinstance(global_command_raw, str) and global_command_raw else "model1"
+            )
             model_id = (
                 runtime_state.get_command_default_model(chat_id, global_command_model)
                 if chat_id
@@ -314,6 +336,10 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
         if chat_id and not runtime_state.is_model_enabled(chat_id, model_id):
             await self.send_text(f"模型 {model_id} 当前不可用")
             return False, f"模型 {model_id} 已禁用", True
+
+        if chat_id and not is_chat_allowed_for_model(self.get_config, chat_id, model_id):
+            await self.send_text(f"模型 {model_id} 当前聊天流不可用")
+            return False, f"模型 {model_id} 被访问规则拒绝", True
 
         # 获取模型配置
         model_config = self._get_model_config(model_id)
@@ -374,7 +400,8 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
 
         try:
             # 获取重试次数配置
-            max_retries = self.get_config("components.max_retries", 2)
+            max_retries_raw: Any = self.get_config("components.max_retries", 2)
+            max_retries: int = max_retries_raw if isinstance(max_retries_raw, int) else 2
 
             # 对于 Gemini/Zai 格式，将原始 LLM 尺寸添加到 model_config 中
             model_config = inject_llm_original_size(model_config, llm_original_size or "")
@@ -493,7 +520,7 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
         self, model_config: Optional[Dict[str, Any]] = None, model_id: Optional[str] = None, send_timestamp: float = 0.0
     ):
         """安排最近发送消息的自动撤回"""
-        global_enabled = self.get_config("auto_recall.enabled", False)
+        global_enabled: bool = bool(self.get_config("auto_recall.enabled", False))
         if not global_enabled or not model_config:
             return
 
@@ -513,7 +540,7 @@ class PicGenerationCommand(PicCommandMixin, BaseCommand):
         await schedule_auto_recall(chat_id, delay_seconds, self.log_prefix, self.send_command, send_timestamp)
 
 
-class PicConfigCommand(PicCommandMixin, BaseCommand):
+class PicConfigCommand(PicCommandMixin):
     """图片生成配置管理命令"""
 
     # Command基本信息
@@ -604,9 +631,19 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
                 await self.send_text("未找到任何模型配置")
                 return False, "无模型配置", True
 
+            if not isinstance(models_config, dict):
+                await self.send_text("模型配置格式错误")
+                return False, "模型配置格式错误", True
+
             # 获取当前默认模型
-            global_default = self.get_config("generation.default_model", "model1")
-            global_command = self.get_config("components.pic_command_model", "model1")
+            global_default_raw: Any = self.get_config("generation.default_model", "model1")
+            global_default: str = (
+                global_default_raw if isinstance(global_default_raw, str) and global_default_raw else "model1"
+            )
+            global_command_raw: Any = self.get_config("components.pic_command_model", "model1")
+            global_command: str = (
+                global_command_raw if isinstance(global_command_raw, str) and global_command_raw else "model1"
+            )
 
             # 获取运行时状态
             action_default = runtime_state.get_action_default_model(chat_id, global_default)
@@ -620,9 +657,10 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
                 if isinstance(config, dict):
                     # 检查模型是否被禁用
                     is_disabled = model_id in disabled_models
+                    is_rule_blocked = not is_chat_allowed_for_model(self.get_config, chat_id, model_id)
 
-                    # 非管理员不显示被禁用的模型
-                    if is_disabled and not is_admin:
+                    # 非管理员不显示不可用的模型
+                    if (is_disabled or is_rule_blocked) and not is_admin:
                         continue
 
                     model_name = config.get("name", config.get("model", "未知"))
@@ -635,15 +673,18 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
 
                     # 管理员额外标记
                     disabled_mark = " ❌" if is_disabled else ""
+                    access_mark = " 🚫" if is_rule_blocked else ""
                     recall_mark = " 🔕" if model_id in recall_disabled else ""
 
                     message_lines.append(
-                        f"• {model_id}{default_mark}{command_mark}{img2img_mark}{disabled_mark}{recall_mark}\n"
+                        f"• {model_id}{default_mark}{command_mark}{img2img_mark}{disabled_mark}{access_mark}{recall_mark}\n"
                         f"  模型: {model_name}\n"
                     )
 
             # 图例说明
-            message_lines.append("\n📖 图例：✅默认 🔧/dr命令 🖼️图生图 📝仅文生图")
+            message_lines.append(
+                "\n📖 图例：✅默认 🔧/dr命令 🖼️图生图 📝仅文生图 ❌运行时禁用 🚫访问规则限制 🔕撤回关闭"
+            )
 
             message = "\n".join(message_lines)
             await self.send_text(message)
@@ -672,6 +713,10 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
                 await self.send_text(f"模型 '{model_id}' 已被禁用")
                 return False, f"模型 '{model_id}' 已被禁用", True
 
+            if not is_chat_allowed_for_model(self.get_config, chat_id, model_id):
+                await self.send_text(f"模型 '{model_id}' 当前聊天流不可用")
+                return False, f"模型 '{model_id}' 被访问规则拒绝", True
+
             # 设置运行时状态
             runtime_state.set_command_default_model(chat_id, model_id)
 
@@ -690,13 +735,20 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             runtime_state.reset_chat_state(chat_id)
 
             # 获取全局默认配置
-            global_action_model = self.get_config("generation.default_model", "model1")
-            global_command_model = self.get_config("components.pic_command_model", "model1")
+            global_action_raw: Any = self.get_config("generation.default_model", "model1")
+            global_action_model: str = (
+                global_action_raw if isinstance(global_action_raw, str) and global_action_raw else "model1"
+            )
+            global_command_raw: Any = self.get_config("components.pic_command_model", "model1")
+            global_command_model: str = (
+                global_command_raw if isinstance(global_command_raw, str) and global_command_raw else "model1"
+            )
 
             await self.send_text(
                 f"✅ 当前聊天流配置已重置！\n\n"
                 f"🎯 默认模型: {global_action_model}\n"
                 f"🔧 /dr命令模型: {global_command_model}\n"
+                f"🌐 访问规则: 已恢复为 config.toml 默认值\n"
                 f"📋 所有模型已启用\n"
                 f"🔔 所有撤回已启用\n\n"
                 f"使用 /dr config 查看当前配置"
@@ -714,9 +766,19 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
         """显示当前配置信息"""
         try:
             # 获取全局配置
-            global_action_model = self.get_config("generation.default_model", "model1")
-            global_command_model = self.get_config("components.pic_command_model", "model1")
-            global_plugin_enabled = self.get_config("plugin.enabled", True)
+            global_action_raw: Any = self.get_config("generation.default_model", "model1")
+            global_action_model: str = (
+                global_action_raw if isinstance(global_action_raw, str) and global_action_raw else "model1"
+            )
+            global_command_raw: Any = self.get_config("components.pic_command_model", "model1")
+            global_command_model: str = (
+                global_command_raw if isinstance(global_command_raw, str) and global_command_raw else "model1"
+            )
+            global_plugin_enabled: bool = bool(self.get_config("plugin.enabled", True))
+            global_access_summary = describe_access_rule(
+                self.get_config("access_control.mode", "blacklist"),
+                self.get_config("access_control.list", []),
+            )
             # 获取运行时状态
             plugin_enabled = runtime_state.is_plugin_enabled(chat_id, global_plugin_enabled)
             action_model = runtime_state.get_action_default_model(chat_id, global_action_model)
@@ -724,23 +786,45 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
             disabled_models = runtime_state.get_disabled_models(chat_id)
             recall_disabled = runtime_state.get_recall_disabled_models(chat_id)
 
-            global_selfie_schedule = self.get_config("selfie.schedule_enabled", True)
+            global_selfie_schedule: bool = bool(self.get_config("selfie.schedule_enabled", True))
             selfie_schedule = runtime_state.is_selfie_schedule_enabled(chat_id, global_selfie_schedule)
-            global_selfie_style = self.get_config("selfie.default_style", "standard")
+            global_selfie_style_raw: Any = self.get_config("selfie.default_style", "standard")
+            global_selfie_style: str = (
+                global_selfie_style_raw
+                if isinstance(global_selfie_style_raw, str) and global_selfie_style_raw
+                else "standard"
+            )
             selfie_style = runtime_state.get_selfie_style(chat_id, global_selfie_style)
 
             # 获取模型详细信息
-            action_config = self.get_config(f"models.{action_model}", {})
-            command_config = self.get_config(f"models.{command_model}", {})
+            action_config_raw: Any = self.get_config(f"models.{action_model}", {})
+            action_config: dict[str, Any] = action_config_raw if isinstance(action_config_raw, dict) else {}
+            command_config_raw: Any = self.get_config(f"models.{command_model}", {})
+            command_config: dict[str, Any] = command_config_raw if isinstance(command_config_raw, dict) else {}
+            action_access_summary = describe_access_rule(
+                self.get_config(f"models.{action_model}.access_mode", "blacklist"),
+                self.get_config(f"models.{action_model}.access_list", []),
+            )
+            command_access_summary = describe_access_rule(
+                self.get_config(f"models.{command_model}.access_mode", "blacklist"),
+                self.get_config(f"models.{command_model}.access_list", []),
+            )
+            action_access_allowed = is_chat_allowed_for_model(self.get_config, chat_id, action_model)
+            command_access_allowed = is_chat_allowed_for_model(self.get_config, chat_id, command_model)
 
             # 构建配置信息
             message_lines = [
                 f"⚙️ 当前聊天流配置 (ID: {chat_id[:8]}...)：\n",
                 f"🔌 插件状态: {'✅ 启用' if plugin_enabled else '❌ 禁用'}",
+                f"🌐 全局访问规则: {global_access_summary}",
                 f"🎯 默认模型: {action_model}",
-                f"   • 名称: {action_config.get('name', action_config.get('model', '未知')) if isinstance(action_config, dict) else '未知'}\n",
+                f"   • 名称: {action_config.get('name', action_config.get('model', '未知'))}",
+                f"   • 规则: {action_access_summary}",
+                f"   • 当前聊天流: {'✅ 允许' if action_access_allowed else '🚫 禁止'}\n",
                 f"🔧 /dr命令模型: {command_model}",
-                f"   • 名称: {command_config.get('name', command_config.get('model', '未知')) if isinstance(command_config, dict) else '未知'}",
+                f"   • 名称: {command_config.get('name', command_config.get('model', '未知'))}",
+                f"   • 规则: {command_access_summary}",
+                f"   • 当前聊天流: {'✅ 允许' if command_access_allowed else '🚫 禁止'}",
                 f"\n📸 自拍日程增强: {'✅ 启用' if selfie_schedule else '❌ 禁用'}",
                 f"📷 自拍风格: {selfie_style}",
             ]
@@ -866,6 +950,10 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
                 await self.send_text(f"模型 '{model_id}' 已被禁用")
                 return False, "模型已被禁用", True
 
+            if not is_chat_allowed_for_model(self.get_config, chat_id, model_id):
+                await self.send_text(f"模型 '{model_id}' 当前聊天流不可用")
+                return False, "模型被访问规则拒绝", True
+
             runtime_state.set_action_default_model(chat_id, model_id)
 
             await self.send_text(f"已设置: {model_id}")
@@ -957,7 +1045,7 @@ class PicConfigCommand(PicCommandMixin, BaseCommand):
         return True, "status ok", True
 
 
-class PicStyleCommand(PicCommandMixin, BaseCommand):
+class PicStyleCommand(PicCommandMixin):
     """图片风格管理命令"""
 
     # Command基本信息
@@ -1000,8 +1088,10 @@ class PicStyleCommand(PicCommandMixin, BaseCommand):
     async def _list_styles(self) -> Tuple[bool, Optional[str], bool]:
         """列出所有可用的风格"""
         try:
-            styles_config = self.get_config("styles", {})
-            aliases_config = self.get_config("style_aliases", {})
+            styles_config_raw: Any = self.get_config("styles", {})
+            aliases_config_raw: Any = self.get_config("style_aliases", {})
+            styles_config: dict[str, Any] = styles_config_raw if isinstance(styles_config_raw, dict) else {}
+            aliases_config: dict[str, Any] = aliases_config_raw if isinstance(aliases_config_raw, dict) else {}
 
             if not styles_config:
                 await self.send_text("未找到任何风格配置")
@@ -1048,7 +1138,8 @@ class PicStyleCommand(PicCommandMixin, BaseCommand):
                 return False, f"风格 '{style_name}' 不存在", True
 
             # 查找别名
-            aliases_config = self.get_config("style_aliases", {})
+            aliases_config_raw: Any = self.get_config("style_aliases", {})
+            aliases_config: dict[str, Any] = aliases_config_raw if isinstance(aliases_config_raw, dict) else {}
             aliases = []
             for alias_style, alias_names in aliases_config.items():
                 if alias_style == actual_style and isinstance(alias_names, str):
