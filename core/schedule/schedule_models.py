@@ -6,7 +6,35 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
+
+
+class ActivityType(Enum):
+    """活动类型枚举。"""
+
+    SLEEPING = "sleeping"
+    WAKING_UP = "waking_up"
+    EATING = "eating"
+    WORKING = "working"
+    STUDYING = "studying"
+    EXERCISING = "exercising"
+    RELAXING = "relaxing"
+    SOCIALIZING = "socializing"
+    COMMUTING = "commuting"
+    HOBBY = "hobby"
+    SELF_CARE = "self_care"
+    OTHER = "other"
+
+
+@dataclass
+class ActivityInfo:
+    """统一的活动描述格式。"""
+
+    activity_type: ActivityType
+    description: str
+    mood: str = "neutral"
+    time_point: str = ""
 
 
 @dataclass
@@ -21,6 +49,7 @@ class ScheduleItem:
     mood: str = "neutral"
     outfit: str = ""  # 穿搭（日程生成时确定）
     source: str = "template"
+
 
 def parse_hhmm(s: str) -> int:
     """'HH:MM' -> 分钟数(0-1439)。非法则抛 ValueError。"""
@@ -69,8 +98,6 @@ def from_db_row(row: dict[str, Any]) -> ScheduleItem:
 
 def schedule_item_to_activity_info(item: ScheduleItem, current_time: str = ""):
     """ScheduleItem -> ActivityInfo。"""
-    from ..selfie.schedule_provider import ActivityInfo, ActivityType
-
     try:
         activity_type = ActivityType(item.activity_type)
     except ValueError:

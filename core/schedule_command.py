@@ -6,6 +6,7 @@
   /schedule regen    — 用 LLM 重新生成今日日程
   /schedule inject on|off — 开启/关闭当前会话的日程注入
 """
+
 import logging
 from typing import Optional, Tuple
 
@@ -57,6 +58,7 @@ class ScheduleCommand(BaseCommand):
         """显示当前活动和接下来的活动"""
         try:
             from .schedule.schedule_manager import get_schedule_manager
+
             manager = get_schedule_manager()
 
             activity = await manager.get_current_activity()
@@ -66,9 +68,7 @@ class ScheduleCommand(BaseCommand):
             lines.append("")
 
             if activity:
-                lines.append(
-                    f"🔵 现在：{activity.activity_type.value} — {activity.description}"
-                )
+                lines.append(f"🔵 现在：{activity.activity_type.value} — {activity.description}")
                 if activity.mood and activity.mood != "neutral":
                     lines.append(f"   心情：{activity.mood}")
             else:
@@ -86,8 +86,9 @@ class ScheduleCommand(BaseCommand):
             lines.append("")
             try:
                 from datetime import date
+
                 today = date.today().isoformat()
-                items = await manager._list_items(today)
+                items = await manager.list_schedule_items(today)
                 if items:
                     source = items[0].source if hasattr(items[0], "source") else "unknown"
                     lines.append(f"📊 数据来源：{source}（共 {len(items)} 条）")
@@ -108,6 +109,7 @@ class ScheduleCommand(BaseCommand):
         """用 LLM 重新生成今日日程"""
         try:
             from .schedule.schedule_manager import get_schedule_manager
+
             manager = get_schedule_manager()
 
             await self.send_text("🔄 正在用 LLM 重新生成今日日程...")
@@ -116,8 +118,9 @@ class ScheduleCommand(BaseCommand):
             class _ConfigProxy:
                 def __init__(self, config_dict):
                     self._config = config_dict
+
                 def get_config(self, key, default=None):
-                    keys = key.split('.')
+                    keys = key.split(".")
                     current = self._config
                     for k in keys:
                         if isinstance(current, dict) and k in current:
@@ -154,6 +157,7 @@ class ScheduleCommand(BaseCommand):
 
         try:
             from .schedule.schedule_manager import get_schedule_manager
+
             manager = get_schedule_manager()
 
             enabled = arg == "on"

@@ -12,6 +12,8 @@ from typing import Any
 from .schedule_db import ScheduleDB
 from .schedule_llm_generator import generate_schedule_via_llm
 from .schedule_models import (
+    ActivityInfo,
+    ActivityType,
     ScheduleItem,
     from_db_row,
     is_minutes_in_range,
@@ -106,8 +108,6 @@ class ScheduleManager:
 
     async def get_current_activity(self):
         """获取当前活动，永不返回 None。"""
-        from ..selfie.schedule_provider import ActivityInfo, ActivityType
-
         now = datetime.datetime.now()
         today = now.date().isoformat()
         current_minutes = now.hour * 60 + now.minute
@@ -152,6 +152,11 @@ class ScheduleManager:
 
         future = [item for item in items if item.start_min > current_minutes]
         return [schedule_item_to_activity_info(item) for item in future[: max(0, limit)]]
+
+    async def list_schedule_items(self, schedule_date: str) -> list[ScheduleItem]:
+        """按日期获取日程项列表。"""
+        rows = await asyncio.to_thread(self._db.list_schedule_items, schedule_date)
+        return [from_db_row(row) for row in rows]
 
     async def regen_today_schedule_via_llm(self, plugin: Any) -> bool:
         """手动触发 LLM 重生成。"""
