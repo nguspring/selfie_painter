@@ -129,6 +129,12 @@ class SelfiePainterV2Plugin(BasePlugin):
             title="风格别名", description="风格的中文别名映射。添加更多别名请直接编辑 config.toml", icon="tag", order=11
         ),
         # ---- models 标签页 ----
+        "access_control": ConfigSection(
+            title="聊天流访问控制",
+            description="全局聊天流黑白名单。默认黑名单模式，即默认所有聊天流都可用，只有命中黑名单才会禁用",
+            icon="shield",
+            order=12,
+        ),
         "models": ConfigSection(
             title="多模型配置",
             description="添加更多模型请直接编辑 config.toml，复制 [models.model1] 整节并改名为 model2、model3 等",
@@ -156,12 +162,13 @@ class SelfiePainterV2Plugin(BasePlugin):
                     "auto_recall",
                     "prompt_optimizer",
                     "search_reference",
-                    "prompt_optimizer",
                 ],
                 icon="zap",
             ),
             ConfigTab(id="styles", title="风格管理", sections=["styles", "style_aliases"], icon="palette"),
-            ConfigTab(id="models", title="模型管理", sections=["models", "models.model1"], icon="cpu"),
+            ConfigTab(
+                id="models", title="模型管理", sections=["access_control", "models", "models.model1"], icon="cpu"
+            ),
         ],
     )
 
@@ -198,6 +205,26 @@ class SelfiePainterV2Plugin(BasePlugin):
                 example="model1",
                 placeholder="model1",
                 order=1,
+            ),
+        },
+        "access_control": {
+            "mode": ConfigField(
+                type=str,
+                default="blacklist",
+                description="全局聊天流访问模式。blacklist=黑名单（默认，名单内禁用，其他全部允许）；whitelist=白名单（仅名单内允许）",
+                label="全局模式",
+                choices=["blacklist", "whitelist"],
+                order=1,
+            ),
+            "list": ConfigField(
+                type=list,
+                default=[],
+                description="全局聊天流列表。格式示例：qq:114514:private、qq:1919810:group",
+                label="全局聊天流列表",
+                item_type="string",
+                placeholder="qq:1919810:group",
+                hint="每行一个聊天流ID",
+                order=2,
             ),
         },
         "cache": {
@@ -1958,6 +1985,25 @@ class SelfiePainterV2Plugin(BasePlugin):
             "label": "撤回延时",
             "description": "自动撤回延时（秒）。大于0时启用撤回，0表示不撤回",
         },
+        "access_mode": {
+            "type": str,
+            "default": "blacklist",
+            "choices": ["blacklist", "whitelist"],
+            "group": "prompts",
+            "order": 17,
+            "label": "聊天流模式",
+            "description": "该模型的聊天流访问模式。blacklist=黑名单（默认，名单内禁用）；whitelist=白名单（仅名单内允许）",
+        },
+        "access_list": {
+            "type": list,
+            "default": [],
+            "item_type": "string",
+            "placeholder": "qq:1919810:group",
+            "group": "prompts",
+            "order": 18,
+            "label": "聊天流列表",
+            "description": "该模型的聊天流列表。格式示例：qq:114514:private、qq:1919810:group",
+        },
         "cfg": {
             "type": float,
             "default": 0,
@@ -2125,6 +2171,7 @@ class SelfiePainterV2Plugin(BasePlugin):
                         "rows",
                         "choices",
                         "placeholder",
+                        "item_type",
                         "min",
                         "max",
                         "step",
@@ -2141,20 +2188,57 @@ class SelfiePainterV2Plugin(BasePlugin):
                 # model1-5（或已存在的节）已在类属性里定义好了，
                 # 用 config.toml 里的实际值覆盖 ConfigField.default，
                 # 否则 WebUI 会显示类属性里的硬编码模板默认值而非用户实际配置
+                model_data: dict[str, Any] = {}
                 if raw_config and isinstance(raw_config.get("models"), dict):
-                    model_data = raw_config["models"].get(key, {})
-                    if isinstance(model_data, dict):
-                        existing_fields = self_any.config_schema[section_key]
-                        if isinstance(existing_fields, dict):
-                            for field_name, field_obj in existing_fields.items():
-                                if isinstance(field_obj, ConfigField) and field_name in model_data:
-                                    field_obj.default = model_data[field_name]
+                    loaded_model_data = raw_config["models"].get(key, {})
+                    if isinstance(loaded_model_data, dict):
+                        model_data = loaded_model_data
+
+                existing_fields = self_any.config_schema[section_key]
+                if isinstance(existing_fields, dict):
+                    for field_name, spec in self._MODEL_FIELD_TEMPLATE.items():
+                        if field_name in existing_fields:
+                            continue
+
+                        spec_copy = dict(spec)
+                        if field_name in model_data:
+                            spec_copy["default"] = model_data[field_name]
+
+                        field_kwargs: Dict[str, Any] = {
+                            "type": spec_copy["type"],
+                            "default": spec_copy["default"],
+                        }
+                        for extra_key in (
+                            "label",
+                            "description",
+                            "hint",
+                            "input_type",
+                            "rows",
+                            "choices",
+                            "placeholder",
+                            "item_type",
+                            "min",
+                            "max",
+                            "step",
+                            "group",
+                            "order",
+                            "required",
+                            "disabled",
+                        ):
+                            if extra_key in spec_copy:
+                                field_kwargs[extra_key] = spec_copy[extra_key]
+
+                        existing_fields[field_name] = ConfigField(**field_kwargs)
+
+                    for field_name, field_obj in existing_fields.items():
+                        if isinstance(field_obj, ConfigField) and field_name in model_data:
+                            field_obj.default = model_data[field_name]
 
         # ── 4. 更新 config_layout 里 models 标签页的 sections ──
         # 找到 id="models" 的 tab，重写其 sections 列表
         for tab in self_any.config_layout.tabs:
             if tab.id == "models":
-                tab.sections = ["models"] + [f"models.{k}" for k in model_keys]
+                tab.sections = ["access_control", "models"] + [f"models.{k}" for k in model_keys]
                 break
 
         # ── 4.5 更新 config_layout 里 features 标签页的 sections（插入 wardrobe + outfits）──
