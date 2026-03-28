@@ -121,7 +121,7 @@ CONFIG_SCHEMA = {
             order=1,
         ),
         "config_version": ConfigField(
-            type=str, default="3.6.5", description="插件配置版本号", label="配置版本", disabled=True, order=2
+            type=str, default="3.6.6", description="插件配置版本号", label="配置版本", disabled=True, order=2
         ),
         "enabled": ConfigField(
             type=bool,
@@ -166,7 +166,7 @@ CONFIG_SCHEMA = {
     "cache": {
         "enabled": ConfigField(
             type=bool,
-            default=True,
+            default=False,
             description="是否启用结果缓存。开启后，相同的画图请求会复用之前的结果，节省时间和API费用",
             label="启用缓存",
             order=1,
@@ -919,7 +919,7 @@ CONFIG_SCHEMA = {
         ),
         "guidance_scale": ConfigField(
             type=float,
-            default=2.5,
+            default=5,
             description="引导强度（CFG）。控制AI'听话程度'。值越高越严格遵循提示词。推荐：魔搭/硅基流动 2.5-7.5",
             label="引导强度",
             min=0.0,
@@ -930,7 +930,7 @@ CONFIG_SCHEMA = {
         ),
         "num_inference_steps": ConfigField(
             type=int,
-            default=30,
+            default=28,
             description="推理步数。影响质量和速度。推荐 20-50，太少质量差，太多太慢",
             label="推理步数",
             min=1,
@@ -940,7 +940,7 @@ CONFIG_SCHEMA = {
         ),
         "watermark": ConfigField(
             type=bool,
-            default=True,
+            default=False,
             description="是否添加水印。部分平台会自动添加",
         ),
         "custom_prompt_add": ConfigField(
@@ -955,7 +955,7 @@ CONFIG_SCHEMA = {
         ),
         "negative_prompt_add": ConfigField(
             type=str,
-            default="low quality, worst quality, blurry, text, watermark",
+            default="lowres, blurry, low quality, worst quality, jpeg artifacts, deformed, ugly, bad anatomy, bad hands, extra limbs, extra arms, mutated, watermark, text, signature, grainy, overexposed, underexposed",
             description="负面提示词。避免生成不想要的内容（低质量、模糊、水印等）。豆包/Gemini 不支持此参数",
             label="负面提示词",
             input_type="textarea",
@@ -1115,7 +1115,7 @@ CONFIG_SCHEMA = {
         ),
         "guidance_scale": ConfigField(
             type=float,
-            default=2.5,
+            default=5,
             description="引导强度",
             label="引导强度",
             min=0.0,
@@ -1125,10 +1125,10 @@ CONFIG_SCHEMA = {
             order=9,
         ),
         "num_inference_steps": ConfigField(
-            type=int, default=20, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
+            type=int, default=28, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
         ),
         "watermark": ConfigField(
-            type=bool, default=True, description="是否添加水印", label="水印", group="params", order=11
+            type=bool, default=False, description="是否添加水印", label="水印", group="params", order=11
         ),
         "custom_prompt_add": ConfigField(
             type=str,
@@ -1142,7 +1142,7 @@ CONFIG_SCHEMA = {
         ),
         "negative_prompt_add": ConfigField(
             type=str,
-            default="low quality, worst quality, blurry, text, watermark",
+            default="lowres, blurry, low quality, worst quality, jpeg artifacts, deformed, ugly, bad anatomy, bad hands, extra limbs, extra arms, mutated, watermark, text, signature, grainy, overexposed, underexposed",
             description="负面提示词",
             label="负面提示词",
             input_type="textarea",
@@ -1297,7 +1297,7 @@ CONFIG_SCHEMA = {
         ),
         "guidance_scale": ConfigField(
             type=float,
-            default=2.5,
+            default=5,
             description="引导强度",
             label="引导强度",
             min=0.0,
@@ -1307,10 +1307,10 @@ CONFIG_SCHEMA = {
             order=9,
         ),
         "num_inference_steps": ConfigField(
-            type=int, default=20, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
+            type=int, default=28, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
         ),
         "watermark": ConfigField(
-            type=bool, default=True, description="是否添加水印", label="水印", group="params", order=11
+            type=bool, default=False, description="是否添加水印", label="水印", group="params", order=11
         ),
         "custom_prompt_add": ConfigField(
             type=str,
@@ -1324,7 +1324,7 @@ CONFIG_SCHEMA = {
         ),
         "negative_prompt_add": ConfigField(
             type=str,
-            default="Pornography,nudity,lowres, bad anatomy, bad hands, text, error",
+            default="lowres, blurry, low quality, worst quality, jpeg artifacts, deformed, ugly, bad anatomy, bad hands, extra limbs, extra arms, mutated, watermark, text, signature, grainy, overexposed, underexposed",
             description="负面提示词",
             label="负面提示词",
             input_type="textarea",
@@ -1479,7 +1479,7 @@ CONFIG_SCHEMA = {
         ),
         "guidance_scale": ConfigField(
             type=float,
-            default=2.5,
+            default=5,
             description="引导强度",
             label="引导强度",
             min=0.0,
@@ -1489,10 +1489,10 @@ CONFIG_SCHEMA = {
             order=9,
         ),
         "num_inference_steps": ConfigField(
-            type=int, default=20, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
+            type=int, default=28, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
         ),
         "watermark": ConfigField(
-            type=bool, default=True, description="是否添加水印", label="水印", group="params", order=11
+            type=bool, default=False, description="是否添加水印", label="水印", group="params", order=11
         ),
         "custom_prompt_add": ConfigField(
             type=str,
@@ -1506,7 +1506,7 @@ CONFIG_SCHEMA = {
         ),
         "negative_prompt_add": ConfigField(
             type=str,
-            default="low quality, worst quality, blurry, text, watermark",
+            default="lowres, blurry, low quality, worst quality, jpeg artifacts, deformed, ugly, bad anatomy, bad hands, extra limbs, extra arms, mutated, watermark, text, signature, grainy, overexposed, underexposed",
             description="负面提示词",
             label="负面提示词",
             input_type="textarea",
@@ -1661,7 +1661,7 @@ CONFIG_SCHEMA = {
         ),
         "guidance_scale": ConfigField(
             type=float,
-            default=2.5,
+            default=5,
             description="引导强度",
             label="引导强度",
             min=0.0,
@@ -1671,10 +1671,10 @@ CONFIG_SCHEMA = {
             order=9,
         ),
         "num_inference_steps": ConfigField(
-            type=int, default=20, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
+            type=int, default=28, description="推理步数", label="推理步数", min=1, max=150, group="params", order=10
         ),
         "watermark": ConfigField(
-            type=bool, default=True, description="是否添加水印", label="水印", group="params", order=11
+            type=bool, default=False, description="是否添加水印", label="水印", group="params", order=11
         ),
         "custom_prompt_add": ConfigField(
             type=str,
@@ -1688,7 +1688,7 @@ CONFIG_SCHEMA = {
         ),
         "negative_prompt_add": ConfigField(
             type=str,
-            default="low quality, worst quality, blurry, text, watermark",
+            default="lowres, blurry, low quality, worst quality, jpeg artifacts, deformed, ugly, bad anatomy, bad hands, extra limbs, extra arms, mutated, watermark, text, signature, grainy, overexposed, underexposed",
             description="负面提示词",
             label="负面提示词",
             input_type="textarea",
@@ -1857,7 +1857,7 @@ MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
     },
     "guidance_scale": {
         "type": float,
-        "default": 2.5,
+        "default": 5,
         "min": 0.0,
         "max": 20.0,
         "step": 0.5,
@@ -1868,7 +1868,7 @@ MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
     },
     "num_inference_steps": {
         "type": int,
-        "default": 20,
+        "default": 28,
         "min": 1,
         "max": 150,
         "group": "params",
@@ -1878,7 +1878,7 @@ MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
     },
     "watermark": {
         "type": bool,
-        "default": True,
+        "default": False,
         "group": "params",
         "order": 11,
         "label": "水印",
@@ -1896,7 +1896,7 @@ MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
     },
     "negative_prompt_add": {
         "type": str,
-        "default": "Pornography,nudity,lowres, bad anatomy, bad hands, text, error",
+        "default": "lowres, blurry, low quality, worst quality, jpeg artifacts, deformed, ugly, bad anatomy, bad hands, extra limbs, extra arms, mutated, watermark, text, signature, grainy, overexposed, underexposed",
         "input_type": "textarea",
         "rows": 2,
         "group": "prompts",
