@@ -320,17 +320,14 @@ async def convert_to_selfie_prompt(
 
     prompt_parts: List[str] = []
 
-    # 1. 强制主体（含手部质量引导）
-    prompt_parts.append("(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)")
-
-    # 2. Bot 外观
+    # 1. Bot 外观
     if bot_appearance:
         prompt_parts.append(bot_appearance)
 
-    # 3. 表情
+    # 2. 表情
     prompt_parts.append(f"({scene['expression']}:1.2)")
 
-    # 4. 手部/身体动作
+    # 3. 手部/身体动作
     hand_action = scene["hand_action"]
 
     # standard 自拍禁止手机类词汇
@@ -340,11 +337,7 @@ async def convert_to_selfie_prompt(
 
     if hand_action:
         if selfie_style == "standard":
-            hand_prompt = (
-                f"(visible free hand {hand_action}:1.4), "
-                "(only one hand visible in frame:1.5), "
-                "(single hand gesture:1.3)"
-            )
+            hand_prompt = f"(visible free hand {hand_action}:1.4)"
         elif selfie_style == "photo":
             # 第三人称照片：自然动作，不需要手部强调
             hand_prompt = f"({hand_action}:1.2)"
@@ -352,13 +345,13 @@ async def convert_to_selfie_prompt(
             hand_prompt = f"({hand_action}:1.3)"
         prompt_parts.append(hand_prompt)
 
-    # 5. 环境
+    # 4. 环境
     prompt_parts.append(scene["environment"])
 
-    # 6. 光线
+    # 5. 光线
     prompt_parts.append(scene["lighting"])
 
-    # 7. 自拍风格
+    # 6. 自拍风格
     if selfie_style == "mirror":
         selfie_scene = (
             "mirror selfie, reflection in mirror, holding phone in hand, phone visible, looking at mirror, indoor scene"
@@ -375,7 +368,7 @@ async def convert_to_selfie_prompt(
         )
     prompt_parts.append(selfie_scene)
 
-    # 8. 过滤空值、去重、拼接
+    # 7. 过滤空值、去重、拼接
     prompt_parts = [p for p in prompt_parts if p and p.strip()]
     keywords = [kw.strip() for kw in ", ".join(prompt_parts).split(",")]
     seen = set()
