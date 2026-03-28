@@ -106,8 +106,7 @@ Rules:
 
 # 按风格补充的约束
 _SCENE_STYLE_HINTS = {
-    "standard": """
-7. STYLE CONSTRAINT - Standard selfie: one hand is holding the phone (OFF-SCREEN). Only the OTHER hand is free. Action MUST be a single-hand gesture (e.g. peace sign, touching hair, hand on chin, waving). NEVER use two-hand actions.""",
+    "standard": "",
     "mirror": """
 7. STYLE CONSTRAINT - Mirror selfie: one hand holds the phone (VISIBLE in mirror). Only the OTHER hand is free. Action should be single-hand poses suitable for mirror reflection (e.g. hand on hip, adjusting hair, fixing collar, hand in pocket).""",
     "photo": """
@@ -330,20 +329,14 @@ async def convert_to_selfie_prompt(
     # 3. 手部/身体动作
     hand_action = scene["hand_action"]
 
-    # standard 自拍禁止手机类词汇
-    if selfie_style == "standard" and hand_action:
-        if re.search(r"\b(phone|smartphone|mobile|device)\b", hand_action, flags=re.IGNORECASE):
-            hand_action = "resting head on hand"
-
     if hand_action:
-        if selfie_style == "standard":
-            hand_prompt = f"(visible free hand {hand_action}:1.4)"
-        elif selfie_style == "photo":
+        if selfie_style == "photo":
             # 第三人称照片：自然动作，不需要手部强调
             hand_prompt = f"({hand_action}:1.2)"
-        else:
+            prompt_parts.append(hand_prompt)
+        elif selfie_style != "standard":
             hand_prompt = f"({hand_action}:1.3)"
-        prompt_parts.append(hand_prompt)
+            prompt_parts.append(hand_prompt)
 
     # 4. 环境
     prompt_parts.append(scene["environment"])
@@ -359,13 +352,12 @@ async def convert_to_selfie_prompt(
     elif selfie_style == "photo":
         selfie_scene = "photo, candid shot, natural pose, full body, looking at viewer, (natural composition:1.2)"
     else:
-        selfie_scene = (
-            "selfie, front camera view, POV selfie, "
-            "looking at camera, slight high angle selfie, "
-            "(phone-holding arm out of frame:1.3), "
-            "upper body shot, cowboy shot, "
-            "(centered composition:1.2)"
-        )
+        if hand_action:
+            selfie_scene = (
+                f"POV selfie, looking at camera, high angle, off-screen phone hand, only one hand making {hand_action}"
+            )
+        else:
+            selfie_scene = "POV selfie, looking at camera, high angle, off-screen phone hand"
     prompt_parts.append(selfie_scene)
 
     # 7. 过滤空值、去重、拼接
