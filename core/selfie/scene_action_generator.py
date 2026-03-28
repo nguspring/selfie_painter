@@ -108,10 +108,8 @@ Rules:
 _SCENE_STYLE_HINTS = {
     "standard": """
 7. STYLE CONSTRAINT - Standard selfie: one hand is holding the phone (OFF-SCREEN). Only the OTHER hand is free. Action MUST be a single-hand gesture (e.g. peace sign, touching hair, hand on chin, waving). NEVER use two-hand actions.""",
-
     "mirror": """
 7. STYLE CONSTRAINT - Mirror selfie: one hand holds the phone (VISIBLE in mirror). Only the OTHER hand is free. Action should be single-hand poses suitable for mirror reflection (e.g. hand on hip, adjusting hair, fixing collar, hand in pocket).""",
-
     "photo": """
 7. STYLE CONSTRAINT - Third-person photo: both hands are FREE (someone else is taking the photo). Action can use both hands naturally (e.g. hands behind back, walking casually, holding a cup, leaning on railing, sitting). Prefer natural full-body poses.""",
 }
@@ -137,7 +135,9 @@ def _build_scene_llm_prompt(selfie_style: str) -> str:
     return f"{_SCENE_LLM_PROMPT_BASE}{style_hint}{_SCENE_LLM_EXAMPLES}"
 
 
-async def generate_scene_with_llm(activity_info: ActivityInfo, selfie_style: str = "standard") -> Optional[Dict[str, str]]:
+async def generate_scene_with_llm(
+    activity_info: ActivityInfo, selfie_style: str = "standard"
+) -> Optional[Dict[str, str]]:
     """使用 LLM 根据活动描述生成英文 SD 场景标签
 
     Args:
@@ -273,6 +273,7 @@ async def generate_hand_action_with_llm(description: str, selfie_style: str = "s
 
 # ==================== 公共函数 ====================
 
+
 def get_action_for_activity(activity_info: ActivityInfo) -> Dict[str, str]:
     """
     根据活动类型获取确定性场景数据（手动自拍使用）
@@ -360,21 +361,13 @@ async def convert_to_selfie_prompt(
     # 7. 自拍风格
     if selfie_style == "mirror":
         selfie_scene = (
-            "mirror selfie, reflection in mirror, "
-            "holding phone in hand, phone visible, "
-            "looking at mirror, indoor scene"
+            "mirror selfie, reflection in mirror, holding phone in hand, phone visible, looking at mirror, indoor scene"
         )
     elif selfie_style == "photo":
-        selfie_scene = (
-            "photo, candid shot, natural pose, "
-            "full body or upper body, "
-            "looking away or at camera, "
-            "(natural composition:1.2)"
-        )
+        selfie_scene = "photo, candid shot, natural pose, full body, looking at viewer, (natural composition:1.2)"
     else:
         selfie_scene = (
             "selfie, front camera view, POV selfie, "
-            "(front facing selfie camera angle:1.3), "
             "looking at camera, slight high angle selfie, "
             "(phone-holding arm out of frame:1.3), "
             "upper body shot, cowboy shot, "

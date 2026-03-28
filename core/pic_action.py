@@ -649,7 +649,7 @@ class SelfiePainterAction(BaseAction):
         import random
 
         # 1. 添加强制主体设置（含手部质量引导）
-        forced_subject = "(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)"
+        # forced_subject = "(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)"
 
         # 2. 从独立的selfie配置中获取Bot的默认形象特征（不再从模型配置中获取）
         bot_appearance_raw: object = self.get_config("selfie.prompt_prefix", "")
@@ -707,17 +707,11 @@ class SelfiePainterAction(BaseAction):
             )
         elif selfie_style == "photo":
             # 第三人称照片风格：他人拍摄视角，自然姿态，不出现拍照设备
-            selfie_scene = (
-                "photo, candid shot, natural pose, "
-                "full body or upper body, "
-                "looking away or at camera, "
-                "(natural composition:1.2)"
-            )
+            selfie_scene = "photo, candid shot, natural pose, full body, looking at viewer, (natural composition:1.2)"
         else:
             # 标准自拍风格：前置摄像头视角，握持设备的手臂延伸到画面之外
             selfie_scene = (
                 "selfie, front camera view, POV selfie, "
-                "(front facing selfie camera angle:1.3), "
                 "looking at camera, slight high angle selfie, "
                 "(phone-holding arm out of frame:1.3), "
                 "upper body shot, cowboy shot, "
@@ -756,7 +750,7 @@ class SelfiePainterAction(BaseAction):
                 logger.info(f"{self.log_prefix} 动作池随机{selfie_style}风格: {hand_action}")
 
         # 5. 组装完整提示词
-        prompt_parts = [forced_subject]
+        prompt_parts: list[str] = []
 
         if bot_appearance:
             prompt_parts.append(bot_appearance)

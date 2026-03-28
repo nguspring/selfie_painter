@@ -5,39 +5,14 @@
 BASE64_IMAGE_PREFIXES = ("iVBORw", "/9j/", "UklGR", "R0lGOD")
 
 # 自拍通用手部质量负面提示词（所有自拍风格共用）
-SELFIE_HAND_NEGATIVE = (
-    # 手指数量
-    "extra fingers, missing fingers, fused fingers, "
-    # 手部整体质量
-    "bad hands, mutated hands, "
-    # 多余肢体
-    "extra hands, extra arms, multiple hands, "
-    # 手指形态
-    "interlocked fingers, "
-    # 通用解剖
-    "bad anatomy, anatomical errors, "
-    # 通用绘制质量
-    "poorly drawn hands, poorly drawn fingers, "
-    "wrong hand proportions"
-)
+# 只保留最常用、最有效的 SD 标签，避免重复堆叠。
+SELFIE_HAND_NEGATIVE = "bad hands, extra digits, fewer digits, extra arms, bad anatomy"
 
-# 标准自拍专用：防止生成双手拿手机等不自然姿态
-ANTI_DUAL_PHONE_PROMPT = (
-    "two phones, dual phones, camera in both hands, "
-    "holding phone with both hands, "
-    "both hands holding phone, "
-    "both hands holding device, "
-    "two hands gripping phone, "
-    "selfie stick"
-)
+# 标准自拍专用：强调前摄自拍感，不要把设备本体画进画面
+ANTI_DUAL_PHONE_PROMPT = "phone, smartphone, camera, device, selfie stick"
 
-# 第三人称照片专用：禁止拍照设备出现在画面中
-ANTI_CAMERA_DEVICE_PROMPT = (
-    "phone in hand, holding phone, holding camera, "
-    "camera in hand, visible camera, visible phone, "
-    "selfie stick, recording device, "
-    "smartphone in frame, camera in frame"
-)
+# 第三人称照片专用：不要出现任何拍照设备
+ANTI_CAMERA_DEVICE_PROMPT = "phone, smartphone, camera, device, selfie stick"
 
 VALID_SELFIE_STYLES = {"standard", "mirror", "photo"}
 
