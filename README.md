@@ -5,16 +5,16 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.6.5-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.6.6-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
 
 ---
 
-> 🚀 **从 v3.5.x 升级到 v3.6.5？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v365)。
+> 🚀 **从 v3.5.x 升级到 v3.6.6？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v366)。
 
-> ✨ **v3.6.5 更新**：继续清理 `selfie_painter_v2` 的历史残留结构，修复 `/schedule` 命令读取日程来源时的错误调用，并将插件入口拆分为更清晰的元数据、schema、运行时与组件装配模块。
+> ✨ **v3.6.6 更新**：统一所有模型默认负面提示词、CFG/步数、水印与缓存默认策略，并同步收敛自拍模板默认提示词。
 
 ---
 
@@ -24,21 +24,21 @@
 >
 > 1. 最初基于原版 [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) 修改，发布为 `selfie_painter`（v3.4.x ~ v3.5.x）
 > 2. 原作者后来将 custom_pic_plugin 升级重构为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)（v3.4.0）
-> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.5）
+> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.6）
 >
 > | 项目 | 链接 |
 > |------|------|
 > | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
 > | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.6.5 |
+> | 当前版本 | v3.6.6 |
 >
 > **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
 
 ---
 
-## 🔄 从 v3.5.x 升级到 v3.6.5
+## 🔄 从 v3.5.x 升级到 v3.6.6
 
-v3.6.5 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
+v3.6.6 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
 
 **请删除旧版插件目录后重新安装：**
 
@@ -81,7 +81,7 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 - **自动模式识别**：智能判断文生图或图生图模式
 - **自拍模式**：支持 standard（前置自拍）/ mirror（对镜自拍）/ photo（第三人称照片）三种风格
 - **提示词优化**：自动将中文描述优化为专业英文 SD 提示词
-- **结果缓存**：相同参数复用之前的结果
+- **结果缓存**：默认关闭，按需开启后可复用相同参数的结果
 - **自动撤回**：可按模型配置延时撤回
 
 ### 🛠️ 多 API 格式支持
@@ -279,6 +279,10 @@ admin_users = ["12345"]           # 管理员 QQ 号列表（字符串格式）
 max_retries = 2                   # API 失败重试次数
 enable_debug_info = false         # 显示调试信息
 enable_verbose_debug = false      # 打印完整请求/响应报文
+
+[cache]
+enabled = false                   # 默认关闭结果缓存，按需开启
+max_size = 10
 ```
 
 ### 模型配置
@@ -293,10 +297,11 @@ model = "Kwai-Kolors/Kolors"
 fixed_size_enabled = false
 default_size = "1024x1024"
 seed = -1
-guidance_scale = 2.5
-num_inference_steps = 20
+guidance_scale = 5
+num_inference_steps = 28
+watermark = false
 custom_prompt_add = ", best quality"       # 追加正面提示词
-negative_prompt_add = "lowres, bad anatomy" # 追加负面提示词
+negative_prompt_add = "lowres, blurry, low quality, worst quality, jpeg artifacts, deformed, ugly, bad anatomy, bad hands, extra limbs, extra arms, mutated, watermark, text, signature, grainy, overexposed, underexposed"
 support_img2img = true
 auto_recall_delay = 0                      # 自动撤回延时（秒），0=不撤回
 access_mode = "blacklist"                 # 模型访问模式：默认黑名单
@@ -513,6 +518,15 @@ num_inference_steps = 30
 ---
 
 ## 📝 更新日志
+
+### v3.6.6 (改版) — 2026-03-28
+
+- 🔧 统一所有模型默认负面提示词为同一套基础质量/畸形过滤词
+- 🔧 统一所有模型默认 `guidance_scale = 5`、`num_inference_steps = 28`、`watermark = false`
+- 🔧 将结果缓存默认值改为关闭，避免首次安装时意外复用旧图
+- 🔧 同步 photo 自拍默认模板为 `full body` + `looking at viewer`
+- 🔧 删除自动自拍链残留的 `front facing selfie camera angle`
+- 📝 同步插件版本、manifest、config schema 与 README 到 3.6.6
 
 ### v3.6.5 (改版) — 2026-03-27
 
