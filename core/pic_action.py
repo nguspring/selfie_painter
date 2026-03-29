@@ -784,9 +784,7 @@ class SelfiePainterAction(BaseAction):
                 )
             # standard: selfie_scene 已在上方覆写，无需额外 hand_prompt
             elif selfie_style == "photo":
-                # 第三人称照片：自然动作，不需要手部强调
-                hand_prompt = f"({hand_action}:1.2)"
-                prompt_parts.append(hand_prompt)
+                pass  # photo 模式不注入 hand_action，动作由日程环境自然决定
             else:  # mirror
                 hand_prompt = f"({hand_action}:1.3)"
                 prompt_parts.append(hand_prompt)
