@@ -451,8 +451,8 @@ CONFIG_SCHEMA = {
         ),
         "execution_timing": ConfigField(
             type=str,
-            default="before",
-            description="提示词优化器执行时机。before=在提示词链路最前面先优化用户原始描述；after=等角色参考/自拍拼装等后处理完成后，再对最终提示词做一次优化",
+            default="after",
+            description="提示词优化器执行时机。before=在提示词链路最前面先优化用户原始描述；after=等角色参考/自拍拼装等后处理完成后，再对最终提示词做规范化（推荐，默认）",
             label="优化时机",
             choices=["before", "after"],
             depends_on="prompt_optimizer.enabled",

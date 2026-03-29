@@ -59,7 +59,6 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 
 | 问题 | 状态 | 说明 |
 |------|------|------|
-| grok2api 通过 `openai-chat` 接口生图不稳定 | 🔧 修复中 | 部分 grok2api 实例可以正常生图，部分不行。正在尽力排查兼容性问题 |
 | 与旧版 `selfie_painter` 同时启用时会出现组件注册冲突 | ⚠️ 需手动规避 | `selfie_painter_v2` 与旧版共存时，`draw_picture`、`pic_config_command`、`pic_style_command`、`pic_generation_command` 会因组件名重复而冲突。请停用或移除旧版 `selfie_painter` 后再测试本插件 |
 
 ---
@@ -377,7 +376,7 @@ custom_scenes = ["睡觉的时候穿可爱睡衣", "运动的时候穿运动服"
 ```toml
 [prompt_optimizer]
 enabled = true
-execution_timing = "before"       # before=优化原始描述；after=规范化最终拼装结果（推荐自拍模式）
+execution_timing = "after"        # before=优化原始描述；after=规范化最终拼装结果（推荐，默认）
 custom_api_base_url = ""          # 留空使用 MaiBot 主 LLM
 custom_api_key = ""
 custom_api_model = ""
@@ -388,9 +387,9 @@ custom_api_model = ""
 | 值 | 适用场景 | 行为 |
 |---|---|---|
 | `before` | 普通文生图 | 在所有处理之前运行，将用户的中文/简短描述扩展为完整英文 prompt。同时会对输出做去重处理。 |
-| `after` | **自拍模式（推荐）** | 在角色外观、衣柜穿搭、手部动作、场景全部拼装完成后运行。执行**规范化**而非重写：去重、排序、补全画质 tag、处理 standard 自拍的手部冲突（只保留一个可见手部动作）。 |
+| `after` | **所有模式（推荐，默认）** | 在角色外观、衣柜穿搭、手部动作、场景全部拼装完成后运行。执行**规范化**而非重写：去重、排序、补全画质 tag、中文翻译、处理 standard 自拍的手部冲突（只保留一个可见手部动作）。 |
 
-> ⚠️ **自拍模式建议使用 `after`**：`before` 模式在自拍流程中仅处理场景描述，无法对完整拼装结果规范化；`after` 模式能看到完整 prompt，是处理查重和手部冲突的最佳时机。
+> ⚠️ **自拍模式强烈建议使用 `after`（默认）**：`before` 模式在自拍流程中仅处理场景描述，无法对完整拼装结果规范化；`after` 模式能看到完整 prompt，是处理查重、翻译和手部冲突的最佳时机。
 
 > 💡 **自定义 API**：填写 `custom_api_base_url`、`custom_api_key`、`custom_api_model` 可使用独立 LLM 处理提示词优化，不占用 MaiBot 主 LLM 配额。留空则自动回退到主 LLM。
 ### 自动自拍配置
