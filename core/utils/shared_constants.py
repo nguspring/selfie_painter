@@ -14,6 +14,9 @@ ANTI_DUAL_PHONE_PROMPT = "phone, smartphone, camera, device, selfie stick"
 # 第三人称照片专用：不要出现任何拍照设备
 ANTI_CAMERA_DEVICE_PROMPT = "phone, smartphone, camera, device, selfie stick"
 
+# 对镜自拍专用：避免镜子崩坏效果（人从镜子里出来/镜子变传送门）
+ANTI_MIRROR_PORTAL_PROMPT = "person coming out of mirror, mirror portal, breaking fourth wall, extra reflections, deformed reflection, mirror as window"
+
 VALID_SELFIE_STYLES = {"standard", "mirror", "photo"}
 
 SELFIE_STYLE_DISPLAY_NAMES = {

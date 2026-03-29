@@ -20,6 +20,7 @@ from .utils import (
     SELFIE_HAND_NEGATIVE,
     ANTI_DUAL_PHONE_PROMPT,
     ANTI_CAMERA_DEVICE_PROMPT,
+    ANTI_MIRROR_PORTAL_PROMPT,
     get_model_config,
     merge_negative_prompt,
     inject_llm_original_size,
@@ -708,11 +709,12 @@ class SelfiePainterAction(BaseAction):
             logger.warning(f"{self.log_prefix} 衣柜：注入穿搭失败，将忽略: {exc}")
         # 3. 定义自拍风格特定的场景设置
         if selfie_style == "mirror":
-            # 对镜自拍风格：镜中出现拍照设备，全身或半身
+            # 对镜自拍风格：全身反射，明确镜前空间关系，避免镜子变传送门
             selfie_scene = (
-                "mirror selfie, reflection in mirror, "
-                "holding phone in hand, phone visible, "
-                "looking at mirror, indoor scene"
+                "(mirror selfie:1.4), standing in front of large mirror, "
+                "full body reflection in mirror, mirror frame visible, "
+                "phone held up in reflection, looking at phone screen in mirror, "
+                "indoor scene"
             )
         elif selfie_style == "photo":
             # 第三人称照片风格：他人拍摄视角，自然姿态，不出现拍照设备
@@ -826,6 +828,8 @@ class SelfiePainterAction(BaseAction):
             negative_parts.append(SELFIE_HAND_NEGATIVE)
             if selfie_style == "standard":
                 negative_parts.append(ANTI_DUAL_PHONE_PROMPT)
+            elif selfie_style == "mirror":
+                negative_parts.append(ANTI_MIRROR_PORTAL_PROMPT)
             elif selfie_style == "photo":
                 negative_parts.append(ANTI_CAMERA_DEVICE_PROMPT)
         selfie_negative_prompt = ", ".join(negative_parts)
