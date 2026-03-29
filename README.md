@@ -185,6 +185,26 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 - 支持参考图片进行图生图自拍
 - 连续失败指数退避，重启后自动恢复上次自拍时间
 
+### 🔓 裸模式（raw_mode）
+
+> **配置项**：`selfie.raw_mode = true`
+
+开启后，插件在生成自拍提示词时将**跳过所有内置的固定提示词**，仅保留：
+
+- `selfie.prompt_prefix`（人物外观描述）
+- 用户/LLM 提供的场景描述
+- 手部动作词
+- 日程活动的表情、光线、环境标签
+- 模型自带的 `custom_prompt_add` / `negative_prompt_add`
+
+**跳过的内容**：
+
+- `standard` / `mirror` / `photo` 风格场景模板（构图、视角词等）
+- 固定负面提示词（`bad hands, extra digits` 等手部质量词、`phone, camera` 等设备词）
+
+> ⚠️ **注意**：开启裸模式后，`/dr selfie standard|mirror|photo` 风格切换**不再影响画面构图**。
+> 请务必在 `selfie.prompt_prefix` 或用户描述中自行补充完整的构图、视角、镜头等提示词，
+> 否则画面构图可能不稳定，手部/设备等内容也可能出现异常。
 ---
 
 ## 🆕 新手快速配置指南
