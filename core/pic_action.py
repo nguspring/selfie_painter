@@ -719,7 +719,7 @@ class SelfiePainterAction(BaseAction):
             selfie_scene = "photo, candid shot, natural pose, full body, looking at viewer, (natural composition:1.2)"
         else:
             # 标准自拍风格：场景在步骤6确定 hand_action 后再覆盖赋值
-            selfie_scene = "(selfie:1.4), looking at viewer, two hands only"
+            selfie_scene = "(selfie:1.4), close-up, looking at viewer, two hands only"
 
         # 4. 选择手部动作（优先级：LLM参数 > 日程场景 > LLM按描述生成 > 风格动作池兜底）
         if free_hand_action:
