@@ -165,9 +165,11 @@ class SelfiePainterAction(BaseAction):
                 return timing
         return "before"
 
-    async def _optimize_generation_prompt(self, description: str, scene_only: bool) -> str:
+    async def _optimize_generation_prompt(
+        self, description: str, scene_only: bool, normalize_mode: bool = False, selfie_style: str = ""
+    ) -> str:
         """按当前配置优化提示词，失败时回退原文。"""
-        mode_label = "场景提示词" if scene_only else "提示词"
+        mode_label = "规范化提示词" if normalize_mode else ("场景提示词" if scene_only else "提示词")
         logger.info(f"{self.log_prefix} 开始优化{mode_label}: {description[:50]}...")
         custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
         custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
@@ -176,6 +178,8 @@ class SelfiePainterAction(BaseAction):
             description,
             self.log_prefix,
             scene_only=scene_only,
+            normalize_mode=normalize_mode,
+            selfie_style=selfie_style,
             custom_api_base_url=custom_base_url,
             custom_api_key=custom_api_key,
             custom_api_model=custom_model,
@@ -329,7 +333,9 @@ class SelfiePainterAction(BaseAction):
                 description, selfie_style, free_hand_action, model_id, activity_scene
             )
             if optimizer_enabled and optimizer_timing == "after":
-                description = await self._optimize_generation_prompt(description, scene_only=False)
+                description = await self._optimize_generation_prompt(
+                    description, scene_only=False, normalize_mode=True, selfie_style=selfie_style
+                )
             self._log_prompt_trace(
                 positive_prompt=description,
                 negative_prompt=selfie_negative_prompt,

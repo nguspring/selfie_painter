@@ -377,15 +377,22 @@ custom_scenes = ["睡觉的时候穿可爱睡衣", "运动的时候穿运动服"
 ```toml
 [prompt_optimizer]
 enabled = true
-execution_timing = "before"       # before=最前面先优化原始描述；after=最后再优化拼装后的最终提示词
-custom_api_base_url = ""
+execution_timing = "before"       # before=优化原始描述；after=规范化最终拼装结果（推荐自拍模式）
+custom_api_base_url = ""          # 留空使用 MaiBot 主 LLM
 custom_api_key = ""
 custom_api_model = ""
 ```
 
-- `before`：适合保留现有行为，先把用户原话优化后再继续角色参考、自拍拼装等后处理。
-- `after`：适合希望优化器直接处理“最终版提示词”的场景，让角色参考注入、自拍拼装后的内容一起参与优化。
+#### `execution_timing` 说明
 
+| 值 | 适用场景 | 行为 |
+|---|---|---|
+| `before` | 普通文生图 | 在所有处理之前运行，将用户的中文/简短描述扩展为完整英文 prompt。同时会对输出做去重处理。 |
+| `after` | **自拍模式（推荐）** | 在角色外观、衣柜穿搭、手部动作、场景全部拼装完成后运行。执行**规范化**而非重写：去重、排序、补全画质 tag、处理 standard 自拍的手部冲突（只保留一个可见手部动作）。 |
+
+> ⚠️ **自拍模式建议使用 `after`**：`before` 模式在自拍流程中仅处理场景描述，无法对完整拼装结果规范化；`after` 模式能看到完整 prompt，是处理查重和手部冲突的最佳时机。
+
+> 💡 **自定义 API**：填写 `custom_api_base_url`、`custom_api_key`、`custom_api_model` 可使用独立 LLM 处理提示词优化，不占用 MaiBot 主 LLM 配额。留空则自动回退到主 LLM。
 ### 自动自拍配置
 
 ```toml

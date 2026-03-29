@@ -14,7 +14,7 @@ from src.plugin_system.apis import llm_api
 
 logger = get_logger("mais_art.optimizer")
 
-# 提示词优化系统提示词
+# 提示词优化系统提示词（before 模式：中文/简短描述 → 完整英文 prompt）
 OPTIMIZER_SYSTEM_PROMPT = """You are a professional AI art prompt engineer. Your task is to convert user descriptions into high-quality English prompts for image generation models (Stable Diffusion, DALL-E, etc.).
 
 ## Rules:
@@ -24,6 +24,7 @@ OPTIMIZER_SYSTEM_PROMPT = """You are a professional AI art prompt engineer. Your
 4. Use weight syntax for emphasis: (keyword:1.2) for important elements
 5. Keep prompts concise but descriptive (50-150 words ideal)
 6. Always end with quality tags: masterpiece, best quality, high resolution
+7. Remove duplicate tags from your output. If the same concept appears multiple times with different weights (e.g. "red hair", "(red hair:1.2)"), keep only the highest-weight version.
 
 ## Examples:
 
@@ -37,6 +38,52 @@ Input: 赛博朋克城市
 Output: cyberpunk cityscape, neon lights, futuristic buildings, flying cars, rain, reflective wet streets, holographic advertisements, purple and blue color scheme, atmospheric, cinematic lighting, masterpiece, best quality, high resolution
 
 Now convert the following description to an English prompt:"""
+
+
+# 提示词规范化系统提示词（after 模式：已组装好的 tag 串 → 规范化输出）
+NORMALIZER_SYSTEM_PROMPT = """You are a professional AI art prompt normalizer. You will receive a pre-assembled English tag string for image generation. Your job is to NORMALIZE it — not rewrite it.
+
+## What you MUST do:
+
+### 1. DEDUPLICATION
+Remove duplicate tags. Rules:
+- Exact duplicates: remove all but one (e.g. "solo, solo" → "solo")
+- Weighted duplicates: if the same root word appears with and without weight, keep the highest-weight version only (e.g. "red hair, (red hair:1.2)" → "(red hair:1.2)")
+- Multi-character tags are NOT duplicates: "1girl, 1boy" must be fully preserved
+- Different but related tags are NOT duplicates: "red hair, vibrant red hair" are different — keep both
+
+### 2. REORDER
+Sort tags in this order:
+[character count/gender] → [appearance: hair/eyes/face] → [outfit/accessories] → [action/pose] → [expression/emotional state] → [scene/background] → [lighting/atmosphere] → [quality tags]
+Keep closely related tags adjacent to each other.
+
+### 3. QUALITY TAGS
+If the following quality tags are missing, append them at the very end:
+masterpiece, best quality, high resolution
+Do not duplicate them if already present.
+
+### 4. HAND CONFLICT — standard selfie mode only
+Activate this rule when the input contains selfie-related tags such as: selfie, looking at viewer, phone, holding phone, (selfie:1.4).
+- In standard selfie, one hand holds the phone (arm extended toward camera, hand out of frame).
+- Only ONE visible hand action is valid.
+- If multiple conflicting hand action tags exist (e.g. "peace sign, hand on hip, holding bag"), keep exactly one — prefer the most expressive/specific one.
+- If the input contains a user-specified hand action (tagged with context: free_hand_action), that action has the HIGHEST priority and must be kept.
+- Ensure these clarifying tags are present: arm reaching toward camera, one hand out of frame
+- Remove any tags that imply more than two visible hands.
+
+### 5. WEIGHT FORMAT
+Use (tag:1.x) format only. Do not use any other weight syntax (no [[tag]], no {tag}, no <tag>).
+
+## What you MUST NOT do:
+- Do NOT add new appearance tags (hair color, eye color, clothing, body type, etc.) that are not in the input
+- Do NOT remove or change character count tags (1girl, 1boy, 2girls, etc.)
+- Do NOT add tags that have no basis in the input
+- Do NOT rewrite, paraphrase, or replace existing tags with synonyms
+- Do NOT change the meaning of any existing tag
+- Do NOT add narrative text or explanations
+
+## Output format:
+Output ONLY the normalized tag string. No explanations. No line breaks. Comma-separated tags only."""
 
 # 自拍场景专用提示词：只生成场景/环境/光线/氛围，不生成角色外观
 SELFIE_SCENE_SYSTEM_PROMPT = """You are a scene description assistant for selfie image generation. The character's appearance is already defined separately. Your task is to convert the user's description into English tags describing ONLY the scene, environment, lighting, mood, and atmosphere.
@@ -180,6 +227,8 @@ class PromptOptimizer:
         self,
         user_description: str,
         scene_only: bool = False,
+        normalize_mode: bool = False,
+        selfie_style: str = "",
         custom_api_base_url: str = "",
         custom_api_key: str = "",
         custom_api_model: str = "",
@@ -191,6 +240,8 @@ class PromptOptimizer:
         Args:
             user_description: 用户原始描述（中文或英文）
             scene_only: 仅生成场景/环境描述（自拍模式用，不包含角色外观）
+            normalize_mode: 规范化模式（after 时机用），对已组装好的 tag 串做查重/排序/补全
+            selfie_style: 自拍风格（standard/mirror/photo），normalize_mode 下用于激活手部冲突检测
             custom_api_base_url: 自定义 API 地址（OpenAI 兼容），留空使用 MaiBot 主 LLM
             custom_api_key: 自定义 API 密钥
             custom_api_model: 自定义模型名称
@@ -202,8 +253,15 @@ class PromptOptimizer:
             return False, "描述不能为空"
 
         # 根据模式选择系统提示词
-        system_prompt = SELFIE_SCENE_SYSTEM_PROMPT if scene_only else OPTIMIZER_SYSTEM_PROMPT
-        mode_label = "场景提示词" if scene_only else "提示词"
+        if normalize_mode:
+            system_prompt = NORMALIZER_SYSTEM_PROMPT
+            mode_label = "规范化提示词"
+        elif scene_only:
+            system_prompt = SELFIE_SCENE_SYSTEM_PROMPT
+            mode_label = "场景提示词"
+        else:
+            system_prompt = OPTIMIZER_SYSTEM_PROMPT
+            mode_label = "提示词"
         user_input = user_description.strip()
 
         # ---- 路径 1: 自定义 API ----
@@ -213,7 +271,7 @@ class PromptOptimizer:
             )
             success, response = await self._call_custom_api(
                 system_prompt=system_prompt,
-                user_message=f"Input: {user_input}\nOutput:",
+                user_message=f"{user_input}" if normalize_mode else f"Input: {user_input}\nOutput:",
                 base_url=custom_api_base_url,
                 api_key=custom_api_key,
                 model=custom_api_model,
@@ -234,8 +292,12 @@ class PromptOptimizer:
             return True, user_description
 
         try:
-            # 构建完整 prompt
-            full_prompt = f"{system_prompt}\n\nInput: {user_input}\nOutput:"
+            # 构建完整 prompt（normalize_mode 直接输入 tag 串，否则用 Input/Output 格式）
+            full_prompt = (
+                f"{system_prompt}\n\n{user_input}"
+                if normalize_mode
+                else f"{system_prompt}\n\nInput: {user_input}\nOutput:"
+            )
 
             logger.info(f"{self.log_prefix} 使用MaiBot主LLM优化{mode_label}: {user_input[:50]}...")
 
@@ -301,6 +363,8 @@ async def optimize_prompt(
     user_description: str,
     log_prefix: str = "[PromptOptimizer]",
     scene_only: bool = False,
+    normalize_mode: bool = False,
+    selfie_style: str = "",
     custom_api_base_url: str = "",
     custom_api_key: str = "",
     custom_api_model: str = "",
@@ -311,6 +375,8 @@ async def optimize_prompt(
         user_description: 用户原始描述
         log_prefix: 日志前缀
         scene_only: 仅生成场景/环境描述（自拍模式用）
+        normalize_mode: 规范化模式（after 时机用），对已组装好的 tag 串做查重/排序/补全
+        selfie_style: 自拍风格（standard/mirror/photo），normalize_mode 下激活手部冲突检测
         custom_api_base_url: 自定义 API 地址（OpenAI 兼容），留空使用 MaiBot 主 LLM
         custom_api_key: 自定义 API 密钥
         custom_api_model: 自定义模型名称
@@ -322,6 +388,8 @@ async def optimize_prompt(
     return await optimizer.optimize(
         user_description,
         scene_only=scene_only,
+        normalize_mode=normalize_mode,
+        selfie_style=selfie_style,
         custom_api_base_url=custom_api_base_url,
         custom_api_key=custom_api_key,
         custom_api_model=custom_api_model,
