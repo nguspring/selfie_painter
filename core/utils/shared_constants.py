@@ -11,8 +11,8 @@ SELFIE_HAND_NEGATIVE = "bad hands, extra digits, fewer digits, extra arms, bad a
 # 标准自拍专用：强调前摄自拍感，不要把设备本体画进画面
 ANTI_DUAL_PHONE_PROMPT = "phone, smartphone, camera, device, selfie stick"
 
-# 第三人称照片专用：不要出现任何拍照设备
-ANTI_CAMERA_DEVICE_PROMPT = "phone, smartphone, camera, device, selfie stick"
+# 第三人称照片专用：只防止手持拍摄设备出现在画面主体上
+ANTI_CAMERA_DEVICE_PROMPT = "phone, smartphone, selfie stick"
 
 # 对镜自拍专用：避免镜子崩坏效果（人从镜子里出来/镜子变传送门）
 ANTI_MIRROR_PORTAL_PROMPT = "person coming out of mirror, mirror portal, breaking fourth wall, extra reflections, deformed reflection, mirror as window"

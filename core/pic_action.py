@@ -716,8 +716,8 @@ class SelfiePainterAction(BaseAction):
                 "indoor scene"
             )
         elif selfie_style == "photo":
-            # 第三人称照片风格：他人拍摄视角，自然姿态，不出现拍照设备
-            selfie_scene = "photo, candid shot, natural pose, full body, looking at viewer, (natural composition:1.2)"
+            # 第三人称照片风格：不加任何固定场景约束，完全由角色外观+LLM动作/环境决定构图
+            selfie_scene = ""
         else:
             # 标准自拍风格：场景在步骤6确定 hand_action 后再覆盖赋值
             selfie_scene = "(selfie:1.4), close-up, looking at viewer, two hands only"
@@ -795,7 +795,7 @@ class SelfiePainterAction(BaseAction):
         if activity_scene and activity_scene.get("environment"):
             prompt_parts.append(activity_scene["environment"])
 
-        if not raw_mode:
+        if not raw_mode and selfie_scene:
             prompt_parts.append(selfie_scene)
         prompt_parts.append(description)
 
