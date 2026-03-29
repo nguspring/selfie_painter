@@ -64,7 +64,8 @@ masterpiece, best quality, high resolution
 Do not duplicate them if already present.
 
 ### 4. HAND CONFLICT — standard selfie mode only
-Activate this rule when the input contains selfie-related tags such as: selfie, looking at viewer, phone, holding phone, (selfie:1.4).
+Activate this rule ONLY when the input contains (selfie:1.4) — this tag exclusively marks standard selfie mode.
+Do NOT activate for mirror selfie (which contains "mirror selfie" or "(mirror selfie:1.4)") — in mirror mode both hands are visible.
 - In standard selfie, one hand holds the phone (arm extended toward camera, hand out of frame).
 - Only ONE visible hand action is valid.
 - If multiple conflicting hand action tags exist (e.g. "peace sign, hand on hip, holding bag"), keep exactly one — prefer the most expressive/specific one.
