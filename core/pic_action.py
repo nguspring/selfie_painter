@@ -713,7 +713,6 @@ class SelfiePainterAction(BaseAction):
             selfie_scene = (
                 "(mirror selfie:1.4), standing in front of large mirror, "
                 "full body reflection in mirror, mirror frame visible, "
-                "phone held up in reflection, looking at phone screen in mirror, "
                 "indoor scene"
             )
         elif selfie_style == "photo":
