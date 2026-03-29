@@ -297,6 +297,7 @@ async def convert_to_selfie_prompt(
     activity_info: ActivityInfo,
     selfie_style: str = "standard",
     bot_appearance: str = "",
+    raw_mode: bool = False,
 ) -> Optional[str]:
     """
     将活动信息转换为完整的自拍 SD 提示词（自动自拍专用）
@@ -307,6 +308,7 @@ async def convert_to_selfie_prompt(
         activity_info: 活动信息
         selfie_style: 自拍风格 ("standard"、"mirror" 或 "photo")
         bot_appearance: Bot 外观描述（从配置读取的 selfie.prompt_prefix）
+        raw_mode: 裸模式，跳过固定场景词（selfie_scene），只保留外观、动作、环境等
 
     Returns:
         完整的 SD 提示词，LLM 失败时返回 None
@@ -354,11 +356,18 @@ async def convert_to_selfie_prompt(
     else:
         if hand_action:
             selfie_scene = (
-                f"POV selfie, looking at camera, high angle, off-screen phone hand, only one hand making {hand_action}"
+                "(selfie:1.4), looking at viewer, "
+                "one arm extended forward towards camera and hand out of frame, "
+                f"another hand making {hand_action}, two hands only"
             )
         else:
-            selfie_scene = "POV selfie, looking at camera, high angle, off-screen phone hand"
-    prompt_parts.append(selfie_scene)
+            selfie_scene = (
+                "(selfie:1.4), looking at viewer, "
+                "one arm extended forward towards camera and hand out of frame, "
+                "two hands only"
+            )
+    if not raw_mode:
+        prompt_parts.append(selfie_scene)
 
     # 7. 过滤空值、去重、拼接
     prompt_parts = [p for p in prompt_parts if p and p.strip()]
@@ -376,13 +385,14 @@ async def convert_to_selfie_prompt(
     return final_prompt
 
 
-def get_negative_prompt_for_style(selfie_style: str, base_negative: str = "") -> str:
+def get_negative_prompt_for_style(selfie_style: str, base_negative: str = "", raw_mode: bool = False) -> str:
     """
     获取指定自拍风格的负面提示词
 
     Args:
         selfie_style: 自拍风格
         base_negative: 基础负面提示词（从配置读取）
+        raw_mode: 裸模式，跳过固定负面常量（SELFIE_HAND_NEGATIVE、ANTI_*）
 
     Returns:
         完整的负面提示词
@@ -391,13 +401,14 @@ def get_negative_prompt_for_style(selfie_style: str, base_negative: str = "") ->
     if base_negative:
         parts.append(base_negative)
 
-    # 所有风格都加手部质量负面提示词
-    parts.append(SELFIE_HAND_NEGATIVE)
+    if not raw_mode:
+        # 所有风格都加手部质量负面提示词
+        parts.append(SELFIE_HAND_NEGATIVE)
 
-    # standard 额外加防双手拿手机，photo 额外加禁止拍照设备
-    if selfie_style == "standard":
-        parts.append(ANTI_DUAL_PHONE_PROMPT)
-    elif selfie_style == "photo":
-        parts.append(ANTI_CAMERA_DEVICE_PROMPT)
+        # standard 额外加防双手拿手机，photo 额外加禁止拍照设备
+        if selfie_style == "standard":
+            parts.append(ANTI_DUAL_PHONE_PROMPT)
+        elif selfie_style == "photo":
+            parts.append(ANTI_CAMERA_DEVICE_PROMPT)
 
     return ", ".join(parts)
