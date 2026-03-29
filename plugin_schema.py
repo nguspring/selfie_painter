@@ -382,6 +382,15 @@ CONFIG_SCHEMA = {
             depends_value=True,
             order=7,
         ),
+        "raw_mode": ConfigField(
+            type=bool,
+            default=False,
+            description="裸模式：开启后跳过所有固定自拍场景词（standard/mirror/photo 模板）和固定负面提示词（手部质量词、设备词），只保留 prompt_prefix、用户描述、手部动作、日程表情/光线/环境。开启后请在 prompt_prefix 或用户描述中自行补充完整的构图、视角等提示词，否则画面构图可能不稳定。",
+            label="裸模式（跳过固定提示词）",
+            depends_on="selfie.enabled",
+            depends_value=True,
+            order=8,
+        ),
     },
     "wardrobe": {
         # ========== 总开关（默认关闭） ==========
