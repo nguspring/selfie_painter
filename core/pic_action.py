@@ -20,6 +20,7 @@ from .utils import (
     SELFIE_HAND_NEGATIVE,
     ANTI_DUAL_PHONE_PROMPT,
     ANTI_CAMERA_DEVICE_PROMPT,
+    ANTI_MIRROR_PORTAL_PROMPT,
     get_model_config,
     merge_negative_prompt,
     inject_llm_original_size,
@@ -165,9 +166,11 @@ class SelfiePainterAction(BaseAction):
                 return timing
         return "before"
 
-    async def _optimize_generation_prompt(self, description: str, scene_only: bool) -> str:
+    async def _optimize_generation_prompt(
+        self, description: str, scene_only: bool, normalize_mode: bool = False, selfie_style: str = ""
+    ) -> str:
         """按当前配置优化提示词，失败时回退原文。"""
-        mode_label = "场景提示词" if scene_only else "提示词"
+        mode_label = "规范化提示词" if normalize_mode else ("场景提示词" if scene_only else "提示词")
         logger.info(f"{self.log_prefix} 开始优化{mode_label}: {description[:50]}...")
         custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
         custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
@@ -176,6 +179,8 @@ class SelfiePainterAction(BaseAction):
             description,
             self.log_prefix,
             scene_only=scene_only,
+            normalize_mode=normalize_mode,
+            selfie_style=selfie_style,
             custom_api_base_url=custom_base_url,
             custom_api_key=custom_api_key,
             custom_api_model=custom_model,
@@ -329,7 +334,9 @@ class SelfiePainterAction(BaseAction):
                 description, selfie_style, free_hand_action, model_id, activity_scene
             )
             if optimizer_enabled and optimizer_timing == "after":
-                description = await self._optimize_generation_prompt(description, scene_only=False)
+                description = await self._optimize_generation_prompt(
+                    description, scene_only=False, normalize_mode=True, selfie_style=selfie_style
+                )
             self._log_prompt_trace(
                 positive_prompt=description,
                 negative_prompt=selfie_negative_prompt,
@@ -649,11 +656,14 @@ class SelfiePainterAction(BaseAction):
         import random
 
         # 1. 添加强制主体设置（含手部质量引导）
-        forced_subject = "(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)"
+        # forced_subject = "(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)"
 
         # 2. 从独立的selfie配置中获取Bot的默认形象特征（不再从模型配置中获取）
         bot_appearance_raw: object = self.get_config("selfie.prompt_prefix", "")
         bot_appearance = bot_appearance_raw.strip() if isinstance(bot_appearance_raw, str) else ""
+
+        # 2.5 裸模式开关：跳过固定场景词和负面常量
+        raw_mode: bool = bool(self.get_config("selfie.raw_mode", False))
 
         # 2.1 可选：注入衣柜系统选择的穿搭 prompt（只影响自拍，不影响 /dr 普通画图）
         # 注入点要求：必须在 bot_appearance append 到 prompt_parts 之前完成。
@@ -699,30 +709,18 @@ class SelfiePainterAction(BaseAction):
             logger.warning(f"{self.log_prefix} 衣柜：注入穿搭失败，将忽略: {exc}")
         # 3. 定义自拍风格特定的场景设置
         if selfie_style == "mirror":
-            # 对镜自拍风格：镜中出现拍照设备，全身或半身
+            # 对镜自拍风格：全身反射，明确镜前空间关系，避免镜子变传送门
             selfie_scene = (
-                "mirror selfie, reflection in mirror, "
-                "holding phone in hand, phone visible, "
-                "looking at mirror, indoor scene"
+                "(mirror selfie:1.4), standing in front of large mirror, "
+                "full body reflection in mirror, mirror frame visible, "
+                "indoor scene"
             )
         elif selfie_style == "photo":
-            # 第三人称照片风格：他人拍摄视角，自然姿态，不出现拍照设备
-            selfie_scene = (
-                "photo, candid shot, natural pose, "
-                "full body or upper body, "
-                "looking away or at camera, "
-                "(natural composition:1.2)"
-            )
+            # 第三人称照片风格：不加任何固定场景约束，完全由角色外观+LLM动作/环境决定构图
+            selfie_scene = ""
         else:
-            # 标准自拍风格：前置摄像头视角，握持设备的手臂延伸到画面之外
-            selfie_scene = (
-                "selfie, front camera view, POV selfie, "
-                "(front facing selfie camera angle:1.3), "
-                "looking at camera, slight high angle selfie, "
-                "(phone-holding arm out of frame:1.3), "
-                "upper body shot, cowboy shot, "
-                "(centered composition:1.2)"
-            )
+            # 标准自拍风格：场景在步骤6确定 hand_action 后再覆盖赋值
+            selfie_scene = "(selfie:1.4), close-up, looking at viewer, two hands only"
 
         # 4. 选择手部动作（优先级：LLM参数 > 日程场景 > LLM按描述生成 > 风格动作池兜底）
         if free_hand_action:
@@ -756,7 +754,7 @@ class SelfiePainterAction(BaseAction):
                 logger.info(f"{self.log_prefix} 动作池随机{selfie_style}风格: {hand_action}")
 
         # 5. 组装完整提示词
-        prompt_parts = [forced_subject]
+        prompt_parts: list[str] = []
 
         if bot_appearance:
             prompt_parts.append(bot_appearance)
@@ -778,23 +776,25 @@ class SelfiePainterAction(BaseAction):
 
         if hand_action:
             if selfie_style == "standard":
-                hand_prompt = (
-                    f"(visible free hand {hand_action}:1.4), "
-                    "(only one hand visible in frame:1.5), "
-                    "(single hand gesture:1.3)"
+                # 新统一模板：伸手向镜头 + 另一手做动作 + 两手可见
+                selfie_scene = (
+                    "(selfie:1.4), looking at viewer, "
+                    "one arm extended forward towards camera and hand out of frame, "
+                    f"another hand making {hand_action}, two hands only"
                 )
+            # standard: selfie_scene 已在上方覆写，无需额外 hand_prompt
             elif selfie_style == "photo":
-                # 第三人称照片：自然动作，不需要手部强调
-                hand_prompt = f"({hand_action}:1.2)"
+                pass  # photo 模式不注入 hand_action，动作由日程环境自然决定
             else:  # mirror
                 hand_prompt = f"({hand_action}:1.3)"
-            prompt_parts.append(hand_prompt)
+                prompt_parts.append(hand_prompt)
 
         # 日程活动的环境（如果有，补充到自拍场景之前）
         if activity_scene and activity_scene.get("environment"):
             prompt_parts.append(activity_scene["environment"])
 
-        prompt_parts.append(selfie_scene)
+        if not raw_mode and selfie_scene:
+            prompt_parts.append(selfie_scene)
         prompt_parts.append(description)
 
         # 7. 合并并去重
@@ -821,11 +821,14 @@ class SelfiePainterAction(BaseAction):
         negative_parts = []
         if base_negative:
             negative_parts.append(base_negative)
-        negative_parts.append(SELFIE_HAND_NEGATIVE)
-        if selfie_style == "standard":
-            negative_parts.append(ANTI_DUAL_PHONE_PROMPT)
-        elif selfie_style == "photo":
-            negative_parts.append(ANTI_CAMERA_DEVICE_PROMPT)
+        if not raw_mode:
+            negative_parts.append(SELFIE_HAND_NEGATIVE)
+            if selfie_style == "standard":
+                negative_parts.append(ANTI_DUAL_PHONE_PROMPT)
+            elif selfie_style == "mirror":
+                negative_parts.append(ANTI_MIRROR_PORTAL_PROMPT)
+            elif selfie_style == "photo":
+                negative_parts.append(ANTI_CAMERA_DEVICE_PROMPT)
         selfie_negative_prompt = ", ".join(negative_parts)
 
         self._log_prompt_trace(

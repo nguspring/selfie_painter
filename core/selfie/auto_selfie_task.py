@@ -376,7 +376,8 @@ class AutoSelfieTask:
                     logger.debug("Wardrobe: 未匹配到穿搭")
         except Exception as exc:
             logger.warning("Wardrobe injection failed: %s", exc)
-        prompt = await convert_to_selfie_prompt(activity, selfie_style, bot_appearance)
+        raw_mode: bool = bool(self.get_config("selfie.raw_mode", False))
+        prompt = await convert_to_selfie_prompt(activity, selfie_style, bot_appearance, raw_mode=raw_mode)
         if not prompt:
             logger.warning("LLM 自拍提示词生成失败，跳过本次自拍")
             return
@@ -384,6 +385,7 @@ class AutoSelfieTask:
         negative_prompt = get_negative_prompt_for_style(
             selfie_style,
             self.get_config("selfie.negative_prompt", ""),
+            raw_mode=raw_mode,
         )
 
         logger.info(f"自动自拍风格: {get_selfie_style_display_name(selfie_style)}（{selfie_style}）")

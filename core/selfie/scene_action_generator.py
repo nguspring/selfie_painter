@@ -15,7 +15,7 @@ from typing import Dict, List, Optional
 from src.common.logger import get_logger
 
 from .schedule_provider import ActivityInfo
-from ..utils import SELFIE_HAND_NEGATIVE, ANTI_DUAL_PHONE_PROMPT, ANTI_CAMERA_DEVICE_PROMPT
+from ..utils import SELFIE_HAND_NEGATIVE, ANTI_DUAL_PHONE_PROMPT, ANTI_CAMERA_DEVICE_PROMPT, ANTI_MIRROR_PORTAL_PROMPT
 
 logger = get_logger("auto_selfie.scene")
 
@@ -106,12 +106,9 @@ Rules:
 
 # 按风格补充的约束
 _SCENE_STYLE_HINTS = {
-    "standard": """
-7. STYLE CONSTRAINT - Standard selfie: one hand is holding the phone (OFF-SCREEN). Only the OTHER hand is free. Action MUST be a single-hand gesture (e.g. peace sign, touching hair, hand on chin, waving). NEVER use two-hand actions.""",
-
+    "standard": "",
     "mirror": """
 7. STYLE CONSTRAINT - Mirror selfie: one hand holds the phone (VISIBLE in mirror). Only the OTHER hand is free. Action should be single-hand poses suitable for mirror reflection (e.g. hand on hip, adjusting hair, fixing collar, hand in pocket).""",
-
     "photo": """
 7. STYLE CONSTRAINT - Third-person photo: both hands are FREE (someone else is taking the photo). Action can use both hands naturally (e.g. hands behind back, walking casually, holding a cup, leaning on railing, sitting). Prefer natural full-body poses.""",
 }
@@ -137,7 +134,9 @@ def _build_scene_llm_prompt(selfie_style: str) -> str:
     return f"{_SCENE_LLM_PROMPT_BASE}{style_hint}{_SCENE_LLM_EXAMPLES}"
 
 
-async def generate_scene_with_llm(activity_info: ActivityInfo, selfie_style: str = "standard") -> Optional[Dict[str, str]]:
+async def generate_scene_with_llm(
+    activity_info: ActivityInfo, selfie_style: str = "standard"
+) -> Optional[Dict[str, str]]:
     """使用 LLM 根据活动描述生成英文 SD 场景标签
 
     Args:
@@ -273,6 +272,7 @@ async def generate_hand_action_with_llm(description: str, selfie_style: str = "s
 
 # ==================== 公共函数 ====================
 
+
 def get_action_for_activity(activity_info: ActivityInfo) -> Dict[str, str]:
     """
     根据活动类型获取确定性场景数据（手动自拍使用）
@@ -297,6 +297,7 @@ async def convert_to_selfie_prompt(
     activity_info: ActivityInfo,
     selfie_style: str = "standard",
     bot_appearance: str = "",
+    raw_mode: bool = False,
 ) -> Optional[str]:
     """
     将活动信息转换为完整的自拍 SD 提示词（自动自拍专用）
@@ -307,6 +308,7 @@ async def convert_to_selfie_prompt(
         activity_info: 活动信息
         selfie_style: 自拍风格 ("standard"、"mirror" 或 "photo")
         bot_appearance: Bot 外观描述（从配置读取的 selfie.prompt_prefix）
+        raw_mode: 裸模式，跳过固定场景词（selfie_scene），只保留外观、动作、环境等
 
     Returns:
         完整的 SD 提示词，LLM 失败时返回 None
@@ -319,70 +321,55 @@ async def convert_to_selfie_prompt(
 
     prompt_parts: List[str] = []
 
-    # 1. 强制主体（含手部质量引导）
-    prompt_parts.append("(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)")
-
-    # 2. Bot 外观
+    # 1. Bot 外观
     if bot_appearance:
         prompt_parts.append(bot_appearance)
 
-    # 3. 表情
+    # 2. 表情
     prompt_parts.append(f"({scene['expression']}:1.2)")
 
-    # 4. 手部/身体动作
+    # 3. 手部/身体动作
     hand_action = scene["hand_action"]
 
-    # standard 自拍禁止手机类词汇
-    if selfie_style == "standard" and hand_action:
-        if re.search(r"\b(phone|smartphone|mobile|device)\b", hand_action, flags=re.IGNORECASE):
-            hand_action = "resting head on hand"
-
     if hand_action:
-        if selfie_style == "standard":
-            hand_prompt = (
-                f"(visible free hand {hand_action}:1.4), "
-                "(only one hand visible in frame:1.5), "
-                "(single hand gesture:1.3)"
-            )
-        elif selfie_style == "photo":
+        if selfie_style == "photo":
             # 第三人称照片：自然动作，不需要手部强调
             hand_prompt = f"({hand_action}:1.2)"
-        else:
+            prompt_parts.append(hand_prompt)
+        elif selfie_style != "standard":
             hand_prompt = f"({hand_action}:1.3)"
-        prompt_parts.append(hand_prompt)
+            prompt_parts.append(hand_prompt)
 
-    # 5. 环境
+    # 4. 环境
     prompt_parts.append(scene["environment"])
 
-    # 6. 光线
+    # 5. 光线
     prompt_parts.append(scene["lighting"])
 
-    # 7. 自拍风格
+    # 6. 自拍风格
     if selfie_style == "mirror":
         selfie_scene = (
-            "mirror selfie, reflection in mirror, "
-            "holding phone in hand, phone visible, "
-            "looking at mirror, indoor scene"
+            "mirror selfie, reflection in mirror, holding phone in hand, phone visible, looking at mirror, indoor scene"
         )
     elif selfie_style == "photo":
-        selfie_scene = (
-            "photo, candid shot, natural pose, "
-            "full body or upper body, "
-            "looking away or at camera, "
-            "(natural composition:1.2)"
-        )
+        selfie_scene = "photo, candid shot, natural pose, full body, looking at viewer, (natural composition:1.2)"
     else:
-        selfie_scene = (
-            "selfie, front camera view, POV selfie, "
-            "(front facing selfie camera angle:1.3), "
-            "looking at camera, slight high angle selfie, "
-            "(phone-holding arm out of frame:1.3), "
-            "upper body shot, cowboy shot, "
-            "(centered composition:1.2)"
-        )
-    prompt_parts.append(selfie_scene)
+        if hand_action:
+            selfie_scene = (
+                "(selfie:1.4), looking at viewer, "
+                "one arm extended forward towards camera and hand out of frame, "
+                f"another hand making {hand_action}, two hands only"
+            )
+        else:
+            selfie_scene = (
+                "(selfie:1.4), looking at viewer, "
+                "one arm extended forward towards camera and hand out of frame, "
+                "two hands only"
+            )
+    if not raw_mode:
+        prompt_parts.append(selfie_scene)
 
-    # 8. 过滤空值、去重、拼接
+    # 7. 过滤空值、去重、拼接
     prompt_parts = [p for p in prompt_parts if p and p.strip()]
     keywords = [kw.strip() for kw in ", ".join(prompt_parts).split(",")]
     seen = set()
@@ -398,13 +385,14 @@ async def convert_to_selfie_prompt(
     return final_prompt
 
 
-def get_negative_prompt_for_style(selfie_style: str, base_negative: str = "") -> str:
+def get_negative_prompt_for_style(selfie_style: str, base_negative: str = "", raw_mode: bool = False) -> str:
     """
     获取指定自拍风格的负面提示词
 
     Args:
         selfie_style: 自拍风格
         base_negative: 基础负面提示词（从配置读取）
+        raw_mode: 裸模式，跳过固定负面常量（SELFIE_HAND_NEGATIVE、ANTI_*）
 
     Returns:
         完整的负面提示词
@@ -413,13 +401,16 @@ def get_negative_prompt_for_style(selfie_style: str, base_negative: str = "") ->
     if base_negative:
         parts.append(base_negative)
 
-    # 所有风格都加手部质量负面提示词
-    parts.append(SELFIE_HAND_NEGATIVE)
+    if not raw_mode:
+        # 所有风格都加手部质量负面提示词
+        parts.append(SELFIE_HAND_NEGATIVE)
 
-    # standard 额外加防双手拿手机，photo 额外加禁止拍照设备
-    if selfie_style == "standard":
-        parts.append(ANTI_DUAL_PHONE_PROMPT)
-    elif selfie_style == "photo":
-        parts.append(ANTI_CAMERA_DEVICE_PROMPT)
+        # standard 额外加防双手拿手机，mirror 防镜子崩坏，photo 额外加禁止拍照设备
+        if selfie_style == "standard":
+            parts.append(ANTI_DUAL_PHONE_PROMPT)
+        elif selfie_style == "mirror":
+            parts.append(ANTI_MIRROR_PORTAL_PROMPT)
+        elif selfie_style == "photo":
+            parts.append(ANTI_CAMERA_DEVICE_PROMPT)
 
     return ", ".join(parts)

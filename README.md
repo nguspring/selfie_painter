@@ -5,16 +5,16 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.6.5-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.6.6-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
 
 ---
 
-> 🚀 **从 v3.5.x 升级到 v3.6.5？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v365)。
+> 🚀 **从 v3.5.x 升级到 v3.6.6？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v366)。
 
-> ✨ **v3.6.5 更新**：继续清理 `selfie_painter_v2` 的历史残留结构，修复 `/schedule` 命令读取日程来源时的错误调用，并将插件入口拆分为更清晰的元数据、schema、运行时与组件装配模块。
+> ✨ **v3.6.6 更新**：统一所有模型默认负面提示词、CFG/步数、水印与缓存默认策略，并同步收敛自拍模板默认提示词。
 
 ---
 
@@ -24,21 +24,21 @@
 >
 > 1. 最初基于原版 [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) 修改，发布为 `selfie_painter`（v3.4.x ~ v3.5.x）
 > 2. 原作者后来将 custom_pic_plugin 升级重构为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)（v3.4.0）
-> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.5）
+> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.6）
 >
 > | 项目 | 链接 |
 > |------|------|
 > | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
 > | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.6.5 |
+> | 当前版本 | v3.6.6 |
 >
 > **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
 
 ---
 
-## 🔄 从 v3.5.x 升级到 v3.6.5
+## 🔄 从 v3.5.x 升级到 v3.6.6
 
-v3.6.5 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
+v3.6.6 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
 
 **请删除旧版插件目录后重新安装：**
 
@@ -59,7 +59,6 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 
 | 问题 | 状态 | 说明 |
 |------|------|------|
-| grok2api 通过 `openai-chat` 接口生图不稳定 | 🔧 修复中 | 部分 grok2api 实例可以正常生图，部分不行。正在尽力排查兼容性问题 |
 | 与旧版 `selfie_painter` 同时启用时会出现组件注册冲突 | ⚠️ 需手动规避 | `selfie_painter_v2` 与旧版共存时，`draw_picture`、`pic_config_command`、`pic_style_command`、`pic_generation_command` 会因组件名重复而冲突。请停用或移除旧版 `selfie_painter` 后再测试本插件 |
 
 ---
@@ -81,7 +80,7 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 - **自动模式识别**：智能判断文生图或图生图模式
 - **自拍模式**：支持 standard（前置自拍）/ mirror（对镜自拍）/ photo（第三人称照片）三种风格
 - **提示词优化**：自动将中文描述优化为专业英文 SD 提示词
-- **结果缓存**：相同参数复用之前的结果
+- **结果缓存**：默认关闭，按需开启后可复用相同参数的结果
 - **自动撤回**：可按模型配置延时撤回
 
 ### 🛠️ 多 API 格式支持
@@ -185,6 +184,26 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 - 支持参考图片进行图生图自拍
 - 连续失败指数退避，重启后自动恢复上次自拍时间
 
+### 🔓 裸模式（raw_mode）
+
+> **配置项**：`selfie.raw_mode = true`
+
+开启后，插件在生成自拍提示词时将**跳过所有内置的固定提示词**，仅保留：
+
+- `selfie.prompt_prefix`（人物外观描述）
+- 用户/LLM 提供的场景描述
+- 手部动作词
+- 日程活动的表情、光线、环境标签
+- 模型自带的 `custom_prompt_add` / `negative_prompt_add`
+
+**跳过的内容**：
+
+- `standard` / `mirror` / `photo` 风格场景模板（构图、视角词等）
+- 固定负面提示词（`bad hands, extra digits` 等手部质量词、`phone, camera` 等设备词）
+
+> ⚠️ **注意**：开启裸模式后，`/dr selfie standard|mirror|photo` 风格切换**不再影响画面构图**。
+> 请务必在 `selfie.prompt_prefix` 或用户描述中自行补充完整的构图、视角、镜头等提示词，
+> 否则画面构图可能不稳定，手部/设备等内容也可能出现异常。
 ---
 
 ## 🆕 新手快速配置指南
@@ -279,6 +298,10 @@ admin_users = ["12345"]           # 管理员 QQ 号列表（字符串格式）
 max_retries = 2                   # API 失败重试次数
 enable_debug_info = false         # 显示调试信息
 enable_verbose_debug = false      # 打印完整请求/响应报文
+
+[cache]
+enabled = false                   # 默认关闭结果缓存，按需开启
+max_size = 10
 ```
 
 ### 模型配置
@@ -293,10 +316,11 @@ model = "Kwai-Kolors/Kolors"
 fixed_size_enabled = false
 default_size = "1024x1024"
 seed = -1
-guidance_scale = 2.5
-num_inference_steps = 20
+guidance_scale = 5
+num_inference_steps = 28
+watermark = false
 custom_prompt_add = ", best quality"       # 追加正面提示词
-negative_prompt_add = "lowres, bad anatomy" # 追加负面提示词
+negative_prompt_add = "lowres, blurry, low quality, worst quality, jpeg artifacts, deformed, ugly, bad anatomy, bad hands, extra limbs, extra arms, mutated, watermark, text, signature, grainy, overexposed, underexposed"
 support_img2img = true
 auto_recall_delay = 0                      # 自动撤回延时（秒），0=不撤回
 access_mode = "blacklist"                 # 模型访问模式：默认黑名单
@@ -352,15 +376,22 @@ custom_scenes = ["睡觉的时候穿可爱睡衣", "运动的时候穿运动服"
 ```toml
 [prompt_optimizer]
 enabled = true
-execution_timing = "before"       # before=最前面先优化原始描述；after=最后再优化拼装后的最终提示词
-custom_api_base_url = ""
+execution_timing = "after"        # before=优化原始描述；after=规范化最终拼装结果（推荐，默认）
+custom_api_base_url = ""          # 留空使用 MaiBot 主 LLM
 custom_api_key = ""
 custom_api_model = ""
 ```
 
-- `before`：适合保留现有行为，先把用户原话优化后再继续角色参考、自拍拼装等后处理。
-- `after`：适合希望优化器直接处理“最终版提示词”的场景，让角色参考注入、自拍拼装后的内容一起参与优化。
+#### `execution_timing` 说明
 
+| 值 | 适用场景 | 行为 |
+|---|---|---|
+| `before` | 普通文生图 | 在所有处理之前运行，将用户的中文/简短描述扩展为完整英文 prompt。同时会对输出做去重处理。 |
+| `after` | **所有模式（推荐，默认）** | 在角色外观、衣柜穿搭、手部动作、场景全部拼装完成后运行。执行**规范化**而非重写：去重、排序、补全画质 tag、中文翻译、处理 standard 自拍的手部冲突（只保留一个可见手部动作）。 |
+
+> ⚠️ **自拍模式强烈建议使用 `after`（默认）**：`before` 模式在自拍流程中仅处理场景描述，无法对完整拼装结果规范化；`after` 模式能看到完整 prompt，是处理查重、翻译和手部冲突的最佳时机。
+
+> 💡 **自定义 API**：填写 `custom_api_base_url`、`custom_api_key`、`custom_api_model` 可使用独立 LLM 处理提示词优化，不占用 MaiBot 主 LLM 配额。留空则自动回退到主 LLM。
 ### 自动自拍配置
 
 ```toml
@@ -513,6 +544,15 @@ num_inference_steps = 30
 ---
 
 ## 📝 更新日志
+
+### v3.6.6 (改版) — 2026-03-28
+
+- 🔧 统一所有模型默认负面提示词为同一套基础质量/畸形过滤词
+- 🔧 统一所有模型默认 `guidance_scale = 5`、`num_inference_steps = 28`、`watermark = false`
+- 🔧 将结果缓存默认值改为关闭，避免首次安装时意外复用旧图
+- 🔧 同步 photo 自拍默认模板为 `full body` + `looking at viewer`
+- 🔧 删除自动自拍链残留的 `front facing selfie camera angle`
+- 📝 同步插件版本、manifest、config schema 与 README 到 3.6.6
 
 ### v3.6.5 (改版) — 2026-03-27
 
