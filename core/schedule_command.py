@@ -29,15 +29,8 @@ class ScheduleCommand(BaseCommand):
         Returns:
             Tuple[bool, Optional[str], bool]: (成功, 消息, 是否拦截)
         """
-        import re
-
-        text = self.message.plain_text.strip() if self.message else ""
-        match = re.match(self.command_pattern, text)
-        if not match:
-            return (False, None, True)
-
-        sub = (match.group("sub") or "").lower()
-        arg = (match.group("arg") or "").lower()
+        sub = (self.matched_groups.get("sub") or "").strip().lower()
+        arg = (self.matched_groups.get("arg") or "").strip().lower()
 
         if not sub:
             return await self._show_schedule()
