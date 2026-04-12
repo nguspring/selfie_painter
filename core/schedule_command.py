@@ -2,7 +2,7 @@
 /schedule 命令
 
 子命令：
-  /schedule          — 显示当前活动 + 接下来3个活动 + 数据来源
+  /schedule          — 显示当前活动 + 当天全部日程 + 数据来源
   /schedule regen    — 用 LLM 重新生成今日日程
   /schedule inject on|off — 开启/关闭当前会话的日程注入
 """
@@ -22,6 +22,13 @@ class ScheduleCommand(BaseCommand):
     command_description: str = "查看和管理麦麦的日程"
     command_pattern: str = r"^/(schedule|日程)\s*(?P<sub>\S+)?\s*(?P<arg>\S+)?$"
     intercept_level: int = 2
+
+    @staticmethod
+    def _format_time_range(start_min: int, end_min: int) -> str:
+        """将分钟区间格式化为 HH:MM-HH:MM。"""
+        start_hour, start_minute = divmod(start_min, 60)
+        end_hour, end_minute = divmod(end_min, 60)
+        return f"{start_hour:02d}:{start_minute:02d}-{end_hour:02d}:{end_minute:02d}"
 
     async def execute(self) -> Tuple[bool, Optional[str], bool]:
         """执行 /schedule 命令
@@ -48,17 +55,18 @@ class ScheduleCommand(BaseCommand):
             return (True, None, True)
 
     async def _show_schedule(self) -> Tuple[bool, Optional[str], bool]:
-        """显示当前活动和接下来的活动"""
+        """显示当前活动和当天全部日程。"""
         try:
             from .schedule.schedule_manager import get_schedule_manager
+            from datetime import date
 
             manager = get_schedule_manager()
 
             activity = await manager.get_current_activity()
-            future = await manager.get_future_activities(limit=3)
+            today = date.today().isoformat()
+            items = await manager.list_schedule_items(today)
 
             lines = ["📅 麦麦的日程"]
-            lines.append("")
 
             if activity:
                 lines.append(f"🔵 现在：{activity.activity_type.value} — {activity.description}")
@@ -67,21 +75,16 @@ class ScheduleCommand(BaseCommand):
             else:
                 lines.append("🔵 现在：暂无活动信息")
 
-            if future:
-                lines.append("")
-                lines.append("⏭️ 接下来：")
-                for fa in future:
-                    time_str = fa.time_point if hasattr(fa, "time_point") and fa.time_point else ""
-                    prefix = f"  {time_str} " if time_str else "  "
-                    lines.append(f"{prefix}{fa.description}")
+            if items:
+                lines.append("📋 今日日程：")
+                for item in items:
+                    time_range = self._format_time_range(item.start_min, item.end_min)
+                    lines.append(f"  {time_range} {item.description}")
+            else:
+                lines.append("📋 今日日程：暂无数据")
 
             # 数据来源
-            lines.append("")
             try:
-                from datetime import date
-
-                today = date.today().isoformat()
-                items = await manager.list_schedule_items(today)
                 if items:
                     source = items[0].source if hasattr(items[0], "source") else "unknown"
                     lines.append(f"📊 数据来源：{source}（共 {len(items)} 条）")
