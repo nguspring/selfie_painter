@@ -147,7 +147,7 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 
 | 命令 | 说明 |
 |------|------|
-| `/schedule` | 查看今日日程 |
+| `/schedule` | 查看当前活动 + 当天全部日程（紧凑格式，无空行） |
 | `/schedule regen` | 用 LLM 重新生成今日日程 |
 
 > 运行时配置（模型切换、开关等）仅保存在内存中，重启后恢复为 config.toml 的全局设置。
@@ -159,6 +159,7 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 - 每日自动通过 LLM 生成当天日程（可配置生成时间和模型）
 - LLM 不可用时自动使用工作日/周末兜底模板
 - 日程数据存储在本地 SQLite 数据库（`data/schedule.db`）
+- `/schedule` 会显示当前活动、当天全部时间段日程以及数据来源，便于直接查看一整天安排
 - 在 LLM 生成聊天回复前自动注入麦麦当前活动信息
 - 支持 smart（按时间/消息数节流）和 always 两种注入模式
 
