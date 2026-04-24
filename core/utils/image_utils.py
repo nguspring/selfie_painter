@@ -1,5 +1,4 @@
 import base64
-import urllib.request
 import re
 import os
 from typing import Optional, Tuple, List
@@ -108,12 +107,13 @@ class ImageProcessor:
                 emoji_base64_list.extend(self.find_and_return_emoji_in_message(seg.data))
         return emoji_base64_list
 
-    def download_and_encode_base64(self, image_url: str, proxy_url: str = None) -> Tuple[bool, str]:
+    def download_and_encode_base64(self, image_url: str, proxy_url: str = None, referer: str = "") -> Tuple[bool, str]:
         """下载图片或处理Base64数据URL
 
         Args:
             image_url: 图片 URL 或 data:image/ 数据 URL
             proxy_url: 代理地址（如 http://127.0.0.1:7890），为空则直连
+            referer: 自定义 Referer，优先使用。为空则回退到全局网络配置
         """
         logger.info(f"{self.log_prefix} (B64) 处理图片: {image_url[:50]}...")
 
@@ -132,31 +132,59 @@ class ImageProcessor:
                     logger.error(f"{self.log_prefix} (B64) {error_msg}")
                     return False, error_msg
             else:
-                # 处理普通HTTP URL
+                # 处理普通HTTP URL - 统一使用 requests + 浏览器请求头
+                import requests
+
+                # 从配置读取自定义请求头
+                default_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                custom_referer = referer
+                custom_ua = default_ua
+                auto_referer_from_url = True
+
+                if self.action and hasattr(self.action, 'get_config'):
+                    # 如果传入的 referer 为空，回退到全局网络配置
+                    if not custom_referer:
+                        custom_referer = self.action.get_config("network.custom_referer", "")
+                    custom_ua = self.action.get_config("network.custom_user_agent", default_ua)
+                    auto_referer_from_url = self.action.get_config("network.auto_referer_from_url", True)
+
+                headers = {
+                    "User-Agent": custom_ua,
+                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                }
+
+                # Referer 优先级：模型级 > 全局 > 自动推断（需开关开启）
+                if custom_referer:
+                    headers["Referer"] = custom_referer
+                elif auto_referer_from_url:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(image_url)
+                    if parsed.scheme and parsed.netloc:
+                        headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+
+                request_kwargs = {
+                    "url": image_url,
+                    "timeout": 180,
+                    "headers": headers,
+                }
+
                 if proxy_url:
-                    import requests
+                    request_kwargs["proxies"] = {"http": proxy_url, "https": proxy_url}
                     logger.info(f"{self.log_prefix} (B64) 下载HTTP图片 (proxy: {proxy_url})")
-                    resp = requests.get(image_url, timeout=180, proxies={"http": proxy_url, "https": proxy_url})
-                    if resp.status_code == 200:
-                        base64_encoded_image = base64.b64encode(resp.content).decode("utf-8")
-                        logger.info(f"{self.log_prefix} (B64) 图片下载编码完成. Base64长度: {len(base64_encoded_image)}")
-                        return True, base64_encoded_image
-                    else:
-                        error_msg = f"下载图片失败 (状态: {resp.status_code})"
-                        logger.error(f"{self.log_prefix} (B64) {error_msg} URL: {image_url[:30]}...")
-                        return False, error_msg
                 else:
                     logger.info(f"{self.log_prefix} (B64) 下载HTTP图片")
-                    with urllib.request.urlopen(image_url, timeout=180) as response:
-                        if response.status == 200:
-                            image_bytes = response.read()
-                            base64_encoded_image = base64.b64encode(image_bytes).decode("utf-8")
-                            logger.info(f"{self.log_prefix} (B64) 图片下载编码完成. Base64长度: {len(base64_encoded_image)}")
-                            return True, base64_encoded_image
-                        else:
-                            error_msg = f"下载图片失败 (状态: {response.status})"
-                            logger.error(f"{self.log_prefix} (B64) {error_msg} URL: {image_url[:30]}...")
-                            return False, error_msg
+
+                resp = requests.get(**request_kwargs)
+
+                if resp.status_code == 200:
+                    base64_encoded_image = base64.b64encode(resp.content).decode("utf-8")
+                    logger.info(f"{self.log_prefix} (B64) 图片下载编码完成. Base64长度: {len(base64_encoded_image)}")
+                    return True, base64_encoded_image
+                else:
+                    error_msg = f"下载图片失败 (状态: {resp.status_code})"
+                    logger.error(f"{self.log_prefix} (B64) {error_msg} URL: {image_url[:30]}...")
+                    return False, error_msg
 
         except Exception as e:
             logger.error(f"{self.log_prefix} (B64) 处理图片时错误: {e!r}", exc_info=True)

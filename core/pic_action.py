@@ -1,6 +1,7 @@
 import base64
 import os
 import time as time_module
+from functools import partial
 from typing import Tuple, Optional, Dict, Any
 
 from src.plugin_system.base.base_action import BaseAction  # pyright: ignore[reportMissingImports]
@@ -527,8 +528,11 @@ class SelfiePainterAction(BaseAction):
             final_image_data = self.image_processor.process_api_response(result)
 
             if final_image_data:
+                # 从模型配置中获取自定义 Referer，绑定到下载函数
+                model_referer = model_config.get("custom_referer", "") if model_config else ""
+                download_fn = partial(self._download_and_encode_base64, referer=model_referer)
                 resolved_ok, resolved_data = await resolve_image_data(
-                    final_image_data, self._download_and_encode_base64, self.log_prefix
+                    final_image_data, download_fn, self.log_prefix
                 )
                 if resolved_ok:
                     send_timestamp = time_module.time()
@@ -567,14 +571,14 @@ class SelfiePainterAction(BaseAction):
         )
         return get_model_config(self.get_config, model_id, default_model_id, self.log_prefix) or {}
 
-    def _download_and_encode_base64(self, image_url: str) -> Tuple[bool, str]:
+    def _download_and_encode_base64(self, image_url: str, referer: str = "") -> Tuple[bool, str]:
         """下载图片并转换为base64（带代理支持）"""
         if self.get_config("proxy.enabled", False):
             proxy_url = self.get_config("proxy.url", "http://127.0.0.1:7890")
-            return self.image_processor.download_and_encode_base64(image_url, proxy_url=str(proxy_url))
+            return self.image_processor.download_and_encode_base64(image_url, proxy_url=str(proxy_url), referer=referer)
 
-        # 下层实现的参数类型声明不是 Optional[str]，这里用空字符串表示“无代理”。
-        return self.image_processor.download_and_encode_base64(image_url, proxy_url="")
+        # 下层实现的参数类型声明不是 Optional[str]，这里用空字符串表示"无代理"。
+        return self.image_processor.download_and_encode_base64(image_url, proxy_url="", referer=referer)
 
     def _validate_image_size(self, size: str) -> bool:
         """验证图片尺寸格式是否正确（委托给size_utils）"""
@@ -1101,8 +1105,10 @@ class SelfiePainterAction(BaseAction):
             return False, "API返回数据格式错误"
 
         # 如果是 URL，下载并转为 base64
+        model_referer = model_config.get("custom_referer", "") if model_config else ""
+        download_fn = partial(self._download_and_encode_base64, referer=model_referer)
         return await resolve_image_data(
-            final_image_data, self._download_and_encode_base64, f"{self.log_prefix} [image_only]"
+            final_image_data, download_fn, f"{self.log_prefix} [image_only]"
         )
 
     def _extract_description_from_message(self) -> str:

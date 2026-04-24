@@ -19,7 +19,8 @@ CONFIG_SECTION_DESCRIPTIONS = {
     "components": ConfigSection(title="组件启用配置", icon="puzzle-piece", order=3),
     # ---- network 标签页 ----
     "proxy": ConfigSection(title="代理设置", icon="globe", order=4),
-    "cache": ConfigSection(title="结果缓存配置", icon="database", order=5),
+    "network": ConfigSection(title="网络请求头设置", icon="network", order=5),
+    "cache": ConfigSection(title="结果缓存配置", icon="database", order=6),
     # ---- features 标签页 ----
     "selfie": ConfigSection(title="自拍模式配置", icon="camera", order=6),
     "wardrobe": ConfigSection(
@@ -87,7 +88,7 @@ CONFIG_LAYOUT = ConfigLayout(
     type="tabs",
     tabs=[
         ConfigTab(id="basic", title="基础设置", sections=["plugin", "generation", "components"], icon="settings"),
-        ConfigTab(id="network", title="网络配置", sections=["proxy", "cache"], icon="wifi"),
+        ConfigTab(id="network", title="网络配置", sections=["proxy", "network", "cache"], icon="wifi"),
         ConfigTab(
             id="features",
             title="功能配置",
@@ -121,7 +122,7 @@ CONFIG_SCHEMA = {
             order=1,
         ),
         "config_version": ConfigField(
-            type=str, default="3.6.6", description="插件配置版本号", label="配置版本", disabled=True, order=2
+            type=str, default="3.6.7", description="插件配置版本号", label="配置版本", disabled=True, order=2
         ),
         "enabled": ConfigField(
             type=bool,
@@ -290,6 +291,31 @@ CONFIG_SCHEMA = {
             max=300,
             depends_on="proxy.enabled",
             depends_value=True,
+            order=3,
+        ),
+    },
+    "network": {
+        "custom_referer": ConfigField(
+            type=str,
+            default="",
+            description="自定义 HTTP Referer。当下载图片遇到 Cloudflare 403 时，可填写 API 服务域名作为图片下载的 Referer 请求头。留空代表不启用",
+            label="全局自定义 Referer",
+            placeholder="https://api.example.com/",
+            order=1,
+        ),
+        "auto_referer_from_url": ConfigField(
+            type=bool,
+            default=True,
+            description="自动使用图片 URL 域名作为 Referer。开启后，当全局和模型级 Referer 都未配置时，会自动用图片所在域名作为 Referer 发送请求",
+            label="自动推断 Referer",
+            order=2,
+        ),
+        "custom_user_agent": ConfigField(
+            type=str,
+            default="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            description="自定义 HTTP User-Agent。用于图片下载时的请求头，模拟浏览器访问",
+            label="自定义 User-Agent",
+            placeholder="Mozilla/5.0 ...",
             order=3,
         ),
     },
@@ -584,6 +610,13 @@ CONFIG_SCHEMA = {
             label="日程模型",
             placeholder="planner",
             order=3,
+        ),
+        "force_regen_on_startup": ConfigField(
+            type=bool,
+            default=False,
+            description="启动时是否强制重新生成今日日程。开启后每次插件加载都会调用 LLM 覆盖已有日程；关闭则仅在今天无日程时才会生成",
+            label="启动时强制刷新日程",
+            order=4,
         ),
         # ========== 人设补充配置 ==========
         # 这些配置用于补充主程序人设，让日程更贴合麦麦的性格
@@ -903,10 +936,20 @@ CONFIG_SCHEMA = {
             group="connection",
             order=5,
         ),
+        "custom_referer": ConfigField(
+            type=str,
+            default="",
+            description="自定义 HTTP Referer。当该模型返回的图片 URL 被 Cloudflare 拦截时，可填写 API 服务域名作为图片下载的 Referer 请求头。留空则使用全局网络设置或图片域名",
+            label="自定义 Referer",
+            group="connection",
+            order=6,
+        ),
         "fixed_size_enabled": ConfigField(
             type=bool,
             default=False,
             description="是否固定图片尺寸。开启后强制使用 default_size，关闭则由 LLM 自动选择合适尺寸",
+            group="params",
+            order=7,
         ),
         "default_size": ConfigField(
             type=str,
@@ -914,7 +957,7 @@ CONFIG_SCHEMA = {
             description="默认图片尺寸。格式：宽x高。常见值：1024x1024、512x768、768x512",
             label="默认尺寸",
             group="params",
-            order=7,
+            order=8,
         ),
         "seed": ConfigField(
             type=int,
@@ -1106,11 +1149,19 @@ CONFIG_SCHEMA = {
             group="connection",
             order=5,
         ),
+        "custom_referer": ConfigField(
+            type=str,
+            default="",
+            description="自定义 HTTP Referer。当该模型返回的图片 URL 被 Cloudflare 拦截时，可填写 API 服务域名作为图片下载的 Referer 请求头。留空则使用全局网络设置或图片域名",
+            label="自定义 Referer",
+            group="connection",
+            order=6,
+        ),
         "fixed_size_enabled": ConfigField(
-            type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=6
+            type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=7
         ),
         "default_size": ConfigField(
-            type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=7
+            type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=8
         ),
         "seed": ConfigField(
             type=int,
@@ -1288,11 +1339,19 @@ CONFIG_SCHEMA = {
             group="connection",
             order=5,
         ),
+        "custom_referer": ConfigField(
+            type=str,
+            default="",
+            description="自定义 HTTP Referer。当该模型返回的图片 URL 被 Cloudflare 拦截时，可填写 API 服务域名作为图片下载的 Referer 请求头。留空则使用全局网络设置或图片域名",
+            label="自定义 Referer",
+            group="connection",
+            order=6,
+        ),
         "fixed_size_enabled": ConfigField(
-            type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=6
+            type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=7
         ),
         "default_size": ConfigField(
-            type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=7
+            type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=8
         ),
         "seed": ConfigField(
             type=int,
@@ -1302,7 +1361,7 @@ CONFIG_SCHEMA = {
             min=-1,
             max=2147483647,
             group="params",
-            order=8,
+            order=9,
         ),
         "guidance_scale": ConfigField(
             type=float,
@@ -1470,11 +1529,19 @@ CONFIG_SCHEMA = {
             group="connection",
             order=5,
         ),
+        "custom_referer": ConfigField(
+            type=str,
+            default="",
+            description="自定义 HTTP Referer。当该模型返回的图片 URL 被 Cloudflare 拦截时，可填写 API 服务域名作为图片下载的 Referer 请求头。留空则使用全局网络设置或图片域名",
+            label="自定义 Referer",
+            group="connection",
+            order=6,
+        ),
         "fixed_size_enabled": ConfigField(
-            type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=6
+            type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=7
         ),
         "default_size": ConfigField(
-            type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=7
+            type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=8
         ),
         "seed": ConfigField(
             type=int,
@@ -1484,7 +1551,7 @@ CONFIG_SCHEMA = {
             min=-1,
             max=2147483647,
             group="params",
-            order=8,
+            order=9,
         ),
         "guidance_scale": ConfigField(
             type=float,
@@ -1652,11 +1719,19 @@ CONFIG_SCHEMA = {
             group="connection",
             order=5,
         ),
+        "custom_referer": ConfigField(
+            type=str,
+            default="",
+            description="自定义 HTTP Referer。当该模型返回的图片 URL 被 Cloudflare 拦截时，可填写 API 服务域名作为图片下载的 Referer 请求头。留空则使用全局网络设置或图片域名",
+            label="自定义 Referer",
+            group="connection",
+            order=6,
+        ),
         "fixed_size_enabled": ConfigField(
-            type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=6
+            type=bool, default=False, description="是否固定图片尺寸", label="固定尺寸", group="params", order=7
         ),
         "default_size": ConfigField(
-            type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=7
+            type=str, default="1024x1024", description="默认图片尺寸", label="默认尺寸", group="params", order=8
         ),
         "seed": ConfigField(
             type=int,
@@ -1666,7 +1741,7 @@ CONFIG_SCHEMA = {
             min=-1,
             max=2147483647,
             group="params",
-            order=8,
+            order=9,
         ),
         "guidance_scale": ConfigField(
             type=float,
@@ -1837,6 +1912,14 @@ MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
         "order": 5,
         "label": "模型 ID",
         "description": "模型名称或 ID，如 cancel13/liaocao",
+    },
+    "custom_referer": {
+        "type": str,
+        "default": "",
+        "group": "connection",
+        "order": 6,
+        "label": "自定义 Referer",
+        "description": "自定义 HTTP Referer。当该模型返回的图片 URL 被 Cloudflare 拦截时，可填写 API 服务域名作为图片下载的 Referer 请求头。留空则使用全局网络设置或图片域名",
     },
     "fixed_size_enabled": {
         "type": bool,

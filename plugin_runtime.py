@@ -88,7 +88,7 @@ class PluginRuntimeMixin:
             logger.error("[SelfiePainter] 日程初始化失败: %s", exc, exc_info=True)
 
     async def _schedule_gen_loop(self) -> None:
-        """每日在指定时间重新生成日程。"""
+        """每日在指定时间强制重新生成日程。"""
         import datetime
         import random
 
@@ -102,13 +102,25 @@ class PluginRuntimeMixin:
                     target += datetime.timedelta(days=1)
                 jitter = random.randint(0, 60)
                 wait_seconds = (target - now).total_seconds() + jitter
+                logger.info("[SelfiePainter] 下次日程生成时间: %s (约 %.0f 秒后)", target, wait_seconds)
                 await asyncio.sleep(wait_seconds)
 
                 from .core.schedule import get_schedule_manager
 
                 mgr = get_schedule_manager()
-                await mgr.ensure_today_schedule(plugin=self)
-                logger.info("[SelfiePainter] 每日日程生成完成")
+                # 到达预定时间：强制重新生成，覆盖旧数据
+                success = await mgr.regen_today_schedule_via_llm(self)
+                if success:
+                    logger.info("[SelfiePainter] 每日日程强制重新生成完成")
+                else:
+                    logger.warning("[SelfiePainter] 每日日程重新生成失败，保留旧数据")
+
+                # 按需清理过期历史数据
+                retention_days = self.get_config("schedule.schedule_history_retention_days", -1)
+                if retention_days >= 0:
+                    deleted = await mgr.cleanup_old_schedule_data(retention_days)
+                    if deleted > 0:
+                        logger.info("[SelfiePainter] 清理旧日程: %s 条", deleted)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

@@ -47,47 +47,75 @@ class ScheduleManager:
         await asyncio.to_thread(self._db.ensure_schema)
 
     async def ensure_today_schedule(self, plugin: Any | None = None) -> None:
-        """确保今日有日程，优先模板，再异步尝试 LLM 覆盖。"""
+        """确保今日有日程。无则生成；有则根据配置决定是否强制刷新。"""
         today = datetime.date.today().isoformat()
         items = await asyncio.to_thread(self._db.list_schedule_items, today)
 
-        if not items:
-            template_items = get_template_schedule(today)
-            await asyncio.to_thread(
-                self._db.replace_schedule_items,
-                today,
-                [to_db_dict(item) for item in template_items],
-            )
-            await asyncio.to_thread(self._db.set_state, "schedule_last_generated_date", today)
-            await asyncio.to_thread(self._db.set_state, "schedule_last_generated_source", "template")
-
+        force_regen = False
         if plugin is not None:
-            _ = asyncio.create_task(self._try_llm_override(plugin, today))
+            force_regen = bool(plugin.get_config("schedule.force_regen_on_startup", False))
 
-    async def _try_llm_override(self, plugin: Any, target_date: str) -> None:
-        """尝试使用 LLM 覆盖今日日程。"""
-        try:
-            model_id = str(plugin.get_config("schedule.model_id", "planner"))
-            # 使用增强版生成器，传入 schedule_manager 以支持历史记忆
-            items = await generate_schedule_via_llm(
-                plugin=plugin,
-                target_date=target_date,
-                model_id=model_id,
-                schedule_manager=self,  # 传入 self 以支持历史记忆
-            )
-            if not items:
-                return
+        if items and not force_regen:
+            logger.info("[ScheduleManager] 今日已有日程，跳过生成: %s", today)
+            return
 
-            await asyncio.to_thread(
-                self._db.replace_schedule_items,
-                target_date,
-                [to_db_dict(item) for item in items],
-            )
-            await asyncio.to_thread(self._db.set_state, "schedule_last_generated_date", target_date)
-            await asyncio.to_thread(self._db.set_state, "schedule_last_generated_source", "llm")
-            logger.info("[ScheduleManager] LLM 覆盖日程成功: %s", target_date)
-        except Exception as exc:
-            logger.error("[ScheduleManager] LLM 覆盖异常: %s", exc, exc_info=True)
+        # 强制刷新模式：直接重新生成
+        if items and force_regen:
+            logger.info("[ScheduleManager] 启动时强制刷新日程: %s", today)
+            if plugin is not None:
+                success = await self.regen_today_schedule_via_llm(plugin)
+                if success:
+                    return
+                logger.warning("[ScheduleManager] 强制刷新失败，fallback 模板: %s", today)
+            # 如果 plugin 为 None 或 regen 失败，继续走下面的 fallback
+
+        # 今日无日程 或 强制刷新失败时，尝试 LLM 生成（同步等待，确保启动后数据就绪）
+        if plugin is not None:
+            try:
+                model_id = str(plugin.get_config("schedule.model_id", "planner"))
+                items = await generate_schedule_via_llm(
+                    plugin=plugin,
+                    target_date=today,
+                    model_id=model_id,
+                    schedule_manager=self,
+                )
+                if items:
+                    await asyncio.to_thread(
+                        self._db.replace_schedule_items,
+                        today,
+                        [to_db_dict(item) for item in items],
+                    )
+                    await asyncio.to_thread(self._db.set_state, "schedule_last_generated_date", today)
+                    await asyncio.to_thread(self._db.set_state, "schedule_last_generated_source", "llm")
+                    await asyncio.to_thread(
+                        self._db.log_generation, today, "llm", "success", f"生成 {len(items)} 条"
+                    )
+                    logger.info("[ScheduleManager] LLM 生成日程成功: %s", today)
+                    return
+                else:
+                    await asyncio.to_thread(
+                        self._db.log_generation, today, "llm", "failed", "LLM 返回空"
+                    )
+                    logger.warning("[ScheduleManager] LLM 返回空日程，fallback 模板: %s", today)
+            except Exception as exc:
+                await asyncio.to_thread(
+                    self._db.log_generation, today, "llm", "failed", str(exc)[:200]
+                )
+                logger.error("[ScheduleManager] LLM 生成异常，fallback 模板: %s", exc, exc_info=True)
+
+        # Fallback: 模板兜底
+        template_items = get_template_schedule(today)
+        await asyncio.to_thread(
+            self._db.replace_schedule_items,
+            today,
+            [to_db_dict(item) for item in template_items],
+        )
+        await asyncio.to_thread(self._db.set_state, "schedule_last_generated_date", today)
+        await asyncio.to_thread(self._db.set_state, "schedule_last_generated_source", "template")
+        await asyncio.to_thread(
+            self._db.log_generation, today, "template", "success", f"模板 {len(template_items)} 条"
+        )
+        logger.info("[ScheduleManager] 模板日程已写入: %s", today)
 
     @staticmethod
     def _pick_activity_fallback_item(items: list[ScheduleItem], current_minutes: int) -> ScheduleItem | None:
@@ -159,21 +187,36 @@ class ScheduleManager:
         return [from_db_row(row) for row in rows]
 
     async def regen_today_schedule_via_llm(self, plugin: Any) -> bool:
-        """手动触发 LLM 重生成。"""
+        """强制重新生成今日日程（用于定时任务或手动触发），覆盖旧数据。"""
         today = datetime.date.today().isoformat()
         model_id = str(plugin.get_config("schedule.model_id", "planner"))
-        items = await generate_schedule_via_llm(plugin, today, model_id=model_id)
-        if not items:
-            return False
+        try:
+            items = await generate_schedule_via_llm(plugin, today, model_id=model_id)
+            if not items:
+                await asyncio.to_thread(
+                    self._db.log_generation, today, "llm", "failed", "强制重生成返回空"
+                )
+                logger.warning("[ScheduleManager] LLM 强制重生成返回空: %s", today)
+                return False
 
-        await asyncio.to_thread(
-            self._db.replace_schedule_items,
-            today,
-            [to_db_dict(item) for item in items],
-        )
-        await asyncio.to_thread(self._db.set_state, "schedule_last_generated_date", today)
-        await asyncio.to_thread(self._db.set_state, "schedule_last_generated_source", "llm")
-        return True
+            await asyncio.to_thread(
+                self._db.replace_schedule_items,
+                today,
+                [to_db_dict(item) for item in items],
+            )
+            await asyncio.to_thread(self._db.set_state, "schedule_last_generated_date", today)
+            await asyncio.to_thread(self._db.set_state, "schedule_last_generated_source", "llm")
+            await asyncio.to_thread(
+                self._db.log_generation, today, "llm", "success", f"强制重生成 {len(items)} 条"
+            )
+            logger.info("[ScheduleManager] LLM 强制重生成日程成功: %s", today)
+            return True
+        except Exception as exc:
+            await asyncio.to_thread(
+                self._db.log_generation, today, "llm", "failed", str(exc)[:200]
+            )
+            logger.error("[ScheduleManager] LLM 强制重生成异常: %s", exc, exc_info=True)
+            return False
 
     async def get_inject_override(self, stream_id: str) -> bool | None:
         """读取注入覆盖开关。"""
