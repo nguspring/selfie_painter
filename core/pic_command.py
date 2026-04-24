@@ -15,6 +15,7 @@ from .utils import (
     RoleReferenceStore,
     runtime_state,
     optimize_prompt,
+    resolve_effective_prompt_optimizer_mode,
     get_image_size_async,
     get_model_config,
     inject_llm_original_size,
@@ -115,24 +116,17 @@ class PicCommandMixin(BaseCommand):
         weight = max(1.0, min(2.0, weight))
         return f"{content}, ({features}:{weight})"
 
-    def _get_prompt_optimizer_timing(self) -> str:
-        """获取提示词优化器执行时机。"""
-        timing_raw: Any = self.get_config("prompt_optimizer.execution_timing", "before")
-        if isinstance(timing_raw, str):
-            timing: str = timing_raw.strip().lower()
-            if timing in {"before", "after"}:
-                return timing
-        return "before"
-
-    async def _optimize_generation_prompt(self, description: str) -> str:
+    async def _optimize_generation_prompt(self, description: str, model_id: str) -> str:
         """按当前配置优化普通生图提示词，失败时回退原文。"""
-        logger.info(f"{self.log_prefix} 开始优化提示词...")
+        optimizer_mode = resolve_effective_prompt_optimizer_mode(self.get_config, model_id)
+        logger.info(f"{self.log_prefix} 开始优化提示词，模式: {optimizer_mode}，模型: {model_id}")
         custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
         custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
         custom_model: str = str(self.get_config("prompt_optimizer.custom_api_model", ""))
         success, optimized_prompt = await optimize_prompt(
             description,
             self.log_prefix,
+            mode=optimizer_mode,
             custom_api_base_url=custom_base_url,
             custom_api_key=custom_api_key,
             custom_api_model=custom_model,
@@ -401,16 +395,12 @@ class PicGenerationCommand(PicCommandMixin):
         logger.info(f"{self.log_prefix} 自然语言模式使用{mode_text}")
 
         # 提示词优化
-        optimizer_enabled = bool(self.get_config("prompt_optimizer.enabled", True))
-        optimizer_timing = self._get_prompt_optimizer_timing()
-        if optimizer_enabled and optimizer_timing == "before":
-            description = await self._optimize_generation_prompt(description)
-
-        # 注入角色参考特征（在优化后、尺寸计算前）
+        # 注入角色参考特征，再对最终提示词做一次最终阶段优化
         description = self._inject_role_features(description)
 
-        if optimizer_enabled and optimizer_timing == "after":
-            description = await self._optimize_generation_prompt(description)
+        optimizer_enabled = bool(self.get_config("prompt_optimizer.enabled", True))
+        if optimizer_enabled:
+            description = await self._optimize_generation_prompt(description, model_id)
 
         # 使用统一的尺寸处理逻辑（异步版本，支持 LLM 选择尺寸）
         image_size, llm_original_size = await get_image_size_async(model_config, description, None, self.log_prefix)

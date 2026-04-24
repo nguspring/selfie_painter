@@ -1,9 +1,11 @@
-"""提示词优化器模块
+"""提示词优化器模块。
 
-使用 LLM 将用户描述优化为专业的绘画提示词。
+使用 LLM 将用户描述优化为适合生图的最终提示词。
 支持自定义 API（OpenAI 兼容格式）或使用 MaiBot 主 LLM。
 纯净调用，不带人设和回复风格。
 """
+
+from __future__ import annotations
 
 from typing import Optional, Tuple
 
@@ -41,8 +43,8 @@ Output: cyberpunk cityscape, neon lights, futuristic buildings, flying cars, rai
 Now convert the following description to an English prompt:"""
 
 
-# 提示词规范化系统提示词（after 模式：已组装好的 tag 串 → 规范化输出）
-NORMALIZER_SYSTEM_PROMPT = """You are a professional AI art prompt normalizer. You will receive a pre-assembled English tag string for image generation. Your job is to NORMALIZE it — not rewrite it.
+# SD 标签模式提示词：已组装好的 tag 串 → 规范化输出
+SD_NORMALIZER_SYSTEM_PROMPT = """You are a professional AI art prompt normalizer. You will receive a pre-assembled English tag string for image generation. Your job is to NORMALIZE it — not rewrite it.
 
 ## What you MUST do:
 
@@ -90,6 +92,30 @@ Examples: "哥特洛丽塔" → "gothic lolita dress", "黑丝JK" → "black thi
 
 ## Output format:
 Output ONLY the normalized tag string. No explanations. No line breaks. Comma-separated tags only."""
+
+# 自然语言模式提示词：最终拼装结果 → 更自然的英文短语描述
+NATURAL_LANGUAGE_SYSTEM_PROMPT = """You are a professional AI image prompt editor. You will receive a pre-assembled prompt that may contain tags, mixed Chinese/English fragments, duplicated phrases, wardrobe labels, or selfie composition hints. Rewrite it into ONE natural English image prompt.
+
+## Goals:
+1. Preserve the original meaning and composition intent
+2. Translate any Chinese fragments into fluent English
+3. Merge duplicated or overlapping fragments
+4. Keep important composition cues, outfit details, expressions, environment, lighting, and selfie-style instructions
+5. Keep existing special weighted tags like (selfie:1.4) or (mirror selfie:1.4) if they are present and meaningful
+6. Keep wardrobe/outfit translation results intact if already in English
+7. Keep the final result concise but descriptive, suitable for direct image generation
+
+## Rules:
+- Output ONLY the final English prompt, no explanations
+- Use natural English phrases separated by commas
+- Do NOT invent new appearance details not present in the input
+- Do NOT remove explicit style or composition instructions unless they are clear duplicates
+- Do NOT change character count tags like 1girl, 1boy, solo
+- Keep selfie-related framing cues intact when present
+- If the input is already good English, lightly normalize it instead of rewriting aggressively
+
+## Output format:
+Output ONLY one comma-separated English prompt line."""
 
 # 自拍场景专用提示词：只生成场景/环境/光线/氛围，不生成角色外观
 SELFIE_SCENE_SYSTEM_PROMPT = """You are a scene description assistant for selfie image generation. The character's appearance is already defined separately. Your task is to convert the user's description into English tags describing ONLY the scene, environment, lighting, mood, and atmosphere.
@@ -233,7 +259,7 @@ class PromptOptimizer:
         self,
         user_description: str,
         scene_only: bool = False,
-        normalize_mode: bool = False,
+        mode: str = "sd",
         selfie_style: str = "",
         custom_api_base_url: str = "",
         custom_api_key: str = "",
@@ -246,8 +272,8 @@ class PromptOptimizer:
         Args:
             user_description: 用户原始描述（中文或英文）
             scene_only: 仅生成场景/环境描述（自拍模式用，不包含角色外观）
-            normalize_mode: 规范化模式（after 时机用），对已组装好的 tag 串做查重/排序/补全
-            selfie_style: 自拍风格（standard/mirror/photo），normalize_mode 下用于激活手部冲突检测
+            mode: 最终提示词模式。sd=适合 SD 标签流；natural_language=更自然的英文短语
+            selfie_style: 自拍风格（standard/mirror/photo）
             custom_api_base_url: 自定义 API 地址（OpenAI 兼容），留空使用 MaiBot 主 LLM
             custom_api_key: 自定义 API 密钥
             custom_api_model: 自定义模型名称
@@ -259,15 +285,15 @@ class PromptOptimizer:
             return False, "描述不能为空"
 
         # 根据模式选择系统提示词
-        if normalize_mode:
-            system_prompt = NORMALIZER_SYSTEM_PROMPT
-            mode_label = "规范化提示词"
-        elif scene_only:
+        if scene_only:
             system_prompt = SELFIE_SCENE_SYSTEM_PROMPT
             mode_label = "场景提示词"
+        elif mode == "natural_language":
+            system_prompt = NATURAL_LANGUAGE_SYSTEM_PROMPT
+            mode_label = "自然语言提示词"
         else:
-            system_prompt = OPTIMIZER_SYSTEM_PROMPT
-            mode_label = "提示词"
+            system_prompt = SD_NORMALIZER_SYSTEM_PROMPT
+            mode_label = "SD提示词"
         user_input = user_description.strip()
 
         # ---- 路径 1: 自定义 API ----
@@ -277,7 +303,7 @@ class PromptOptimizer:
             )
             success, response = await self._call_custom_api(
                 system_prompt=system_prompt,
-                user_message=f"{user_input}" if normalize_mode else f"Input: {user_input}\nOutput:",
+                user_message=user_input,
                 base_url=custom_api_base_url,
                 api_key=custom_api_key,
                 model=custom_api_model,
@@ -298,12 +324,7 @@ class PromptOptimizer:
             return True, user_description
 
         try:
-            # 构建完整 prompt（normalize_mode 直接输入 tag 串，否则用 Input/Output 格式）
-            full_prompt = (
-                f"{system_prompt}\n\n{user_input}"
-                if normalize_mode
-                else f"{system_prompt}\n\nInput: {user_input}\nOutput:"
-            )
+            full_prompt = f"{system_prompt}\n\n{user_input}"
 
             logger.info(f"{self.log_prefix} 使用MaiBot主LLM优化{mode_label}: {user_input[:50]}...")
 
@@ -369,7 +390,7 @@ async def optimize_prompt(
     user_description: str,
     log_prefix: str = "[PromptOptimizer]",
     scene_only: bool = False,
-    normalize_mode: bool = False,
+    mode: str = "sd",
     selfie_style: str = "",
     custom_api_base_url: str = "",
     custom_api_key: str = "",
@@ -381,8 +402,8 @@ async def optimize_prompt(
         user_description: 用户原始描述
         log_prefix: 日志前缀
         scene_only: 仅生成场景/环境描述（自拍模式用）
-        normalize_mode: 规范化模式（after 时机用），对已组装好的 tag 串做查重/排序/补全
-        selfie_style: 自拍风格（standard/mirror/photo），normalize_mode 下激活手部冲突检测
+        mode: 最终提示词模式。sd=适合 SD 标签流；natural_language=更自然的英文短语
+        selfie_style: 自拍风格（standard/mirror/photo）
         custom_api_base_url: 自定义 API 地址（OpenAI 兼容），留空使用 MaiBot 主 LLM
         custom_api_key: 自定义 API 密钥
         custom_api_model: 自定义模型名称
@@ -394,7 +415,7 @@ async def optimize_prompt(
     return await optimizer.optimize(
         user_description,
         scene_only=scene_only,
-        normalize_mode=normalize_mode,
+        mode=mode,
         selfie_style=selfie_style,
         custom_api_base_url=custom_api_base_url,
         custom_api_key=custom_api_key,

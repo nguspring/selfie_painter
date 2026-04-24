@@ -28,6 +28,7 @@ from .utils import (
     resolve_image_data,
     schedule_auto_recall,
     optimize_prompt,
+    resolve_effective_prompt_optimizer_mode,
     normalize_selfie_style,
     get_selfie_style_display_name,
     is_chat_allowed_for_model,
@@ -138,7 +139,7 @@ class SelfiePainterAction(BaseAction):
         "size": "图片尺寸，如512x512、1024x1024等（可选，不指定则使用模型默认尺寸）",
         "selfie_mode": "是否启用自拍模式（true/false，可选，默认false）。启用后会自动添加自拍场景和手部动作",
         "selfie_style": "自拍风格，可选值：standard（标准自拍，前置摄像头视角），mirror（对镜自拍，室内镜子场景），photo（第三人称照片，他人拍摄视角，自然姿态）。仅在selfie_mode=true时生效，可选，默认standard",
-        "free_hand_action": "自由手部动作描述（英文）。如果指定此参数，将使用此动作而不是随机生成。仅在selfie_mode=true时生效，可选",
+        "free_hand_action": "自由手部动作描述（英文，可选）。当前仅作为额外构图提示透传给最终提示词优化器，不再由本组件直接决定自拍手势或构图",
     }
 
     # 动作使用场景
@@ -158,20 +159,16 @@ class SelfiePainterAction(BaseAction):
         self.cache_manager = CacheManager(self)
         self._api_clients = {}  # 缓存不同格式的API客户端
 
-    def _get_prompt_optimizer_timing(self) -> str:
-        """获取提示词优化器执行时机。"""
-        timing_raw: object = self.get_config("prompt_optimizer.execution_timing", "before")
-        if isinstance(timing_raw, str):
-            timing: str = timing_raw.strip().lower()
-            if timing in {"before", "after"}:
-                return timing
-        return "before"
-
     async def _optimize_generation_prompt(
-        self, description: str, scene_only: bool, normalize_mode: bool = False, selfie_style: str = ""
+        self,
+        description: str,
+        model_id: str,
+        scene_only: bool = False,
+        selfie_style: str = "",
     ) -> str:
         """按当前配置优化提示词，失败时回退原文。"""
-        mode_label = "规范化提示词" if normalize_mode else ("场景提示词" if scene_only else "提示词")
+        optimizer_mode = resolve_effective_prompt_optimizer_mode(self.get_config, model_id)
+        mode_label = "场景提示词" if scene_only else f"{optimizer_mode}提示词"
         logger.info(f"{self.log_prefix} 开始优化{mode_label}: {description[:50]}...")
         custom_base_url: str = str(self.get_config("prompt_optimizer.custom_api_base_url", ""))
         custom_api_key: str = str(self.get_config("prompt_optimizer.custom_api_key", ""))
@@ -180,7 +177,7 @@ class SelfiePainterAction(BaseAction):
             description,
             self.log_prefix,
             scene_only=scene_only,
-            normalize_mode=normalize_mode,
+            mode=optimizer_mode,
             selfie_style=selfie_style,
             custom_api_base_url=custom_base_url,
             custom_api_key=custom_api_key,
@@ -285,11 +282,7 @@ class SelfiePainterAction(BaseAction):
             description = description[:1000]
             logger.info(f"{self.log_prefix} 图片描述过长，已截断至1000字符")
 
-        # 提示词优化（自拍模式仅优化场景/环境，不生成角色外观）
         optimizer_enabled: bool = bool(self.get_config("prompt_optimizer.enabled", True))
-        optimizer_timing: str = self._get_prompt_optimizer_timing()
-        if optimizer_enabled and optimizer_timing == "before":
-            description = await self._optimize_generation_prompt(description, scene_only=bool(selfie_mode))
 
         # 验证strength参数
         try:
@@ -334,9 +327,12 @@ class SelfiePainterAction(BaseAction):
             description, selfie_negative_prompt = await self._process_selfie_prompt(
                 description, selfie_style, free_hand_action, model_id, activity_scene
             )
-            if optimizer_enabled and optimizer_timing == "after":
+            if optimizer_enabled:
                 description = await self._optimize_generation_prompt(
-                    description, scene_only=False, normalize_mode=True, selfie_style=selfie_style
+                    description,
+                    model_id,
+                    scene_only=False,
+                    selfie_style=selfie_style,
                 )
             self._log_prompt_trace(
                 positive_prompt=description,
@@ -367,8 +363,8 @@ class SelfiePainterAction(BaseAction):
         # 收集自拍模式的额外负面提示词（如果启用了自拍模式）
         extra_neg = selfie_negative_prompt if selfie_mode else None
 
-        if optimizer_enabled and optimizer_timing == "after" and not selfie_mode:
-            description = await self._optimize_generation_prompt(description, scene_only=False)
+        if optimizer_enabled and not selfie_mode:
+            description = await self._optimize_generation_prompt(description, model_id, scene_only=False)
 
         # **智能检测：判断是文生图还是图生图**
         input_image_base64 = await self.image_processor.get_recent_image()
@@ -650,15 +646,13 @@ class SelfiePainterAction(BaseAction):
         Args:
             description: 用户提供的描述
             selfie_style: 自拍风格（standard/mirror/photo）
-            free_hand_action: LLM生成的手部动作（可选）
+            free_hand_action: 额外动作提示（可选），仅透传给最终优化器
             model_id: 模型ID（保留参数，用于后续扩展）
-            activity_scene: 日程活动场景数据（含 hand_action, environment, expression, lighting），无日程时为 None
+            activity_scene: 日程活动场景数据（可能含 hand_action, environment, expression, lighting），无日程时为 None
 
         Returns:
             (prompt, negative_prompt) 元组：处理后的正面提示词和负面提示词
         """
-        import random
-
         # 1. 添加强制主体设置（含手部质量引导）
         # forced_subject = "(1girl:1.4), (solo:1.3), (perfect hands:1.2), (correct anatomy:1.1)"
 
@@ -711,53 +705,15 @@ class SelfiePainterAction(BaseAction):
         except Exception as exc:
             # 衣柜属于"增强项"，任何异常都不应影响自拍主流程
             logger.warning(f"{self.log_prefix} 衣柜：注入穿搭失败，将忽略: {exc}")
-        # 3. 定义自拍风格特定的场景设置
+        # 3. 仅保留高层自拍风格标记，不在这里硬编码具体构图细节
         if selfie_style == "mirror":
-            # 对镜自拍风格：全身反射，明确镜前空间关系，避免镜子变传送门
-            selfie_scene = (
-                "(mirror selfie:1.4), standing in front of large mirror, "
-                "full body reflection in mirror, mirror frame visible, "
-                "indoor scene"
-            )
+            selfie_scene = "(mirror selfie:1.4)"
         elif selfie_style == "photo":
-            # 第三人称照片风格：不加任何固定场景约束，完全由角色外观+LLM动作/环境决定构图
-            selfie_scene = ""
+            selfie_scene = "(third-person photo:1.3), candid photo"
         else:
-            # 标准自拍风格：场景在步骤6确定 hand_action 后再覆盖赋值
-            selfie_scene = "(selfie:1.4), close-up, looking at viewer, two hands only"
+            selfie_scene = "(selfie:1.4)"
 
-        # 4. 选择手部动作（优先级：LLM参数 > 日程场景 > LLM按描述生成 > 风格动作池兜底）
-        if free_hand_action:
-            hand_action = free_hand_action
-            logger.info(f"{self.log_prefix} 使用LLM生成的手部动作: {free_hand_action}")
-        elif activity_scene and activity_scene.get("hand_action"):
-            hand_action = activity_scene["hand_action"]
-            logger.info(f"{self.log_prefix} 使用日程活动动作: {hand_action}")
-        else:
-            hand_action = None
-            # 描述足够具体时才调 LLM 生成手部动作，太短/太泛直接走动作池
-            # 注意此处 description 可能是优化器处理后的英文，也可能是优化失败的中文原文
-            # 英文: "cafe, warm" ≈10字符; 中文: "在咖啡厅" = 4字符
-            # 用 3 个中文字 / 6 个英文字符 作为阈值
-            desc_clean = description.strip().strip(",. 、，。")
-            desc_long_enough = (
-                len(desc_clean) > 3 if any("\u4e00" <= c <= "\u9fff" for c in desc_clean) else len(desc_clean) > 6
-            )
-            if desc_long_enough:
-                try:
-                    from .selfie.scene_action_generator import generate_hand_action_with_llm
-
-                    hand_action = await generate_hand_action_with_llm(description, selfie_style)
-                    if hand_action:
-                        logger.info(f"{self.log_prefix} LLM 生成{selfie_style}风格手部动作: {hand_action[:60]}")
-                except Exception as e:
-                    logger.debug(f"{self.log_prefix} LLM 手部动作生成失败: {e}")
-            # LLM 未调用或失败，从动作池兜底
-            if not hand_action:
-                hand_action = random.choice(self._get_hand_actions_for_style(selfie_style))
-                logger.info(f"{self.log_prefix} 动作池随机{selfie_style}风格: {hand_action}")
-
-        # 5. 组装完整提示词
+        # 4. 组装完整提示词：这里只收集素材，不再在业务代码里决定手势或自拍构图
         prompt_parts: list[str] = []
 
         if bot_appearance:
@@ -770,30 +726,10 @@ class SelfiePainterAction(BaseAction):
             if activity_scene.get("lighting"):
                 prompt_parts.append(activity_scene["lighting"])
 
-        # 6. 手部动作处理：过滤不当词汇 + 按风格加权重
-        import re as _re
+        if free_hand_action:
+            prompt_parts.append(free_hand_action)
 
-        # standard 模式过滤手机类词汇（LLM 可能返回含 phone 的动作）
-        if selfie_style == "standard" and hand_action:
-            if _re.search(r"\b(phone|smartphone|mobile|device)\b", hand_action, flags=_re.IGNORECASE):
-                hand_action = "resting head on hand"
-
-        if hand_action:
-            if selfie_style == "standard":
-                # 新统一模板：伸手向镜头 + 另一手做动作 + 两手可见
-                selfie_scene = (
-                    "(selfie:1.4), looking at viewer, "
-                    "one arm extended forward towards camera and hand out of frame, "
-                    f"another hand making {hand_action}, two hands only"
-                )
-            # standard: selfie_scene 已在上方覆写，无需额外 hand_prompt
-            elif selfie_style == "photo":
-                pass  # photo 模式不注入 hand_action，动作由日程环境自然决定
-            else:  # mirror
-                hand_prompt = f"({hand_action}:1.3)"
-                prompt_parts.append(hand_prompt)
-
-        # 日程活动的环境（如果有，补充到自拍场景之前）
+        # 日程活动的环境（如果有，补充到自拍风格标记之前）
         if activity_scene and activity_scene.get("environment"):
             prompt_parts.append(activity_scene["environment"])
 
@@ -869,97 +805,6 @@ class SelfiePainterAction(BaseAction):
         logger.info(f"{self.log_prefix} {default_preview_label}: {positive_prompt[:100]}...")
         if negative_prompt:
             logger.info(f"{self.log_prefix} 自拍模式负面提示词: {negative_prompt[:150]}...")
-
-    # ---- 风格专用手部动作池 ----
-    # standard: 一只手举手机（画面外），只有另一只手空闲，仅单手动作
-    _STANDARD_HAND_ACTIONS = [
-        "peace sign, v sign",
-        "waving hand, friendly gesture",
-        "thumbs up, positive gesture",
-        "single hand heart gesture, cute gesture",
-        "touching cheek gently, soft expression",
-        "hand near chin, thinking pose",
-        "one hand playing with hair, casual",
-        "hand on hip, confident pose",
-        "adjusting hair, elegant gesture",
-        "resting chin on hand, relaxed",
-        "finger on lips, secretive",
-        "hand on chest, gentle",
-        "tucking hair behind ear, elegant",
-        "touching necklace, delicate gesture",
-        "hand near eye level, cute gesture",
-        "cat paw gesture, playful",
-        "saluting, playful military pose",
-        "hand covering mouth slightly, shy smile",
-        "blowing kiss, romantic",
-        "index finger pointing up, idea pose",
-        "hand cupping own cheek, adorable",
-        "hand resting on collarbone, graceful",
-        "pinching own cheek, playful",
-    ]
-
-    # mirror: 一只手拿手机对着镜子拍（画面内可见），另一只手空闲，全身或半身
-    _MIRROR_HAND_ACTIONS = [
-        "hand on hip, confident pose",
-        "hand in hair, adjusting hairstyle",
-        "hand on waist, model pose",
-        "fixing collar, neat appearance",
-        "adjusting earring, elegant detail",
-        "hand touching shoulder, graceful",
-        "hand behind head, relaxed pose",
-        "one hand on thigh, standing pose",
-        "hand resting at side, natural",
-        "hand lightly touching mirror, playful",
-        "fixing skirt, adjusting outfit",
-        "hand on bag strap, casual",
-        "brushing bangs aside, stylish",
-        "hand in pocket, cool pose",
-        "hand on chin, thoughtful pose",
-        "adjusting glasses, intellectual",
-        "checking watch, elegant gesture",
-        "holding strand of hair, delicate",
-        "hand near face, model pose",
-        "touching hat brim, fashionable",
-    ]
-
-    # photo: 他人拍摄视角，双手都自由，可以有更自然丰富的全身姿态
-    _PHOTO_HAND_ACTIONS = [
-        "hands behind back, standing gracefully",
-        "hands in pockets, casual walk",
-        "one hand in hair wind blowing, dynamic",
-        "arms at sides, natural standing",
-        "holding coffee cup, cafe scene",
-        "hands clasped in front, gentle pose",
-        "holding bag, walking pose",
-        "leaning on railing, one hand resting",
-        "sitting with hands on lap, relaxed",
-        "hand on hat, windy day",
-        "twirling, arms slightly out, dynamic spin",
-        "arms stretched out, embracing scenery",
-        "holding flower, smelling gently",
-        "hand shielding eyes from sun, looking afar",
-        "carrying shopping bags, casual walk",
-        "holding book to chest, scholarly",
-        "one hand waving at camera, candid",
-        "both hands holding drink, warm gesture",
-        "hands on knees, sitting pose",
-        "leaning against wall, arms relaxed",
-        "crouching down, hands on knees, playful angle",
-        "running toward camera, joyful",
-        "holding umbrella, rainy atmosphere",
-        "hand reaching out toward camera, inviting",
-        "sitting on bench, legs crossed, elegant",
-    ]
-
-    @staticmethod
-    def _get_hand_actions_for_style(selfie_style: str) -> list[str]:
-        """根据自拍风格返回对应的手部动作池"""
-        if selfie_style == "mirror":
-            return SelfiePainterAction._MIRROR_HAND_ACTIONS
-        elif selfie_style == "photo":
-            return SelfiePainterAction._PHOTO_HAND_ACTIONS
-        else:
-            return SelfiePainterAction._STANDARD_HAND_ACTIONS
 
     def _get_selfie_reference_image(self) -> Optional[str]:
         """获取自拍参考图片的base64编码
