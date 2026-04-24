@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time as time_module
+from functools import partial
 from typing import Any, Dict, Optional, Tuple
 
 from src.plugin_system.base.base_command import BaseCommand  # pyright: ignore[reportMissingImports]
@@ -299,8 +300,10 @@ class PicGenerationCommand(PicCommandMixin):
                     return False, "API返回数据格式错误", True
 
                 # 处理结果：统一解析为 base64
+                model_referer = model_config.get("custom_referer", "") if model_config else ""
+                download_fn = partial(self._download_and_encode_base64, referer=model_referer)
                 resolved_ok, resolved_data = await resolve_image_data(
-                    final_image_data, self._download_and_encode_base64, self.log_prefix
+                    final_image_data, download_fn, self.log_prefix
                 )
                 if resolved_ok:
                     send_timestamp = time_module.time()
@@ -432,8 +435,10 @@ class PicGenerationCommand(PicCommandMixin):
                     return False, "API返回数据格式错误", True
 
                 # 处理结果：统一解析为 base64
+                model_referer = model_config.get("custom_referer", "") if model_config else ""
+                download_fn = partial(self._download_and_encode_base64, referer=model_referer)
                 resolved_ok, resolved_data = await resolve_image_data(
-                    final_image_data, self._download_and_encode_base64, self.log_prefix
+                    final_image_data, download_fn, self.log_prefix
                 )
                 if resolved_ok:
                     send_timestamp = time_module.time()
@@ -516,12 +521,12 @@ class PicGenerationCommand(PicCommandMixin):
             logger.error(f"{self.log_prefix} 获取风格配置失败: {e!r}")
             return None
 
-    def _download_and_encode_base64(self, image_url: str) -> Tuple[bool, str]:
+    def _download_and_encode_base64(self, image_url: str, referer: str = "") -> Tuple[bool, str]:
         """下载图片并转换为base64编码（委托给 ImageProcessor）"""
         proxy_url = ""
         if self.get_config("proxy.enabled", False):
             proxy_url = str(self.get_config("proxy.url", "http://127.0.0.1:7890") or "")
-        return self.image_processor.download_and_encode_base64(image_url, proxy_url=proxy_url)
+        return self.image_processor.download_and_encode_base64(image_url, proxy_url=proxy_url, referer=referer)
 
     async def _schedule_auto_recall_for_recent_message(
         self, model_config: Optional[Dict[str, Any]] = None, model_id: Optional[str] = None, send_timestamp: float = 0.0

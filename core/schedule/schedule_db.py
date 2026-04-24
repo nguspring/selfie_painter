@@ -117,6 +117,24 @@ class ScheduleDB:
                 )
                 """
             )
+            _ = conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schedule_generation_logs (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    schedule_date TEXT NOT NULL,
+                    source        TEXT NOT NULL,
+                    status        TEXT NOT NULL,
+                    detail        TEXT,
+                    created_at    TEXT NOT NULL
+                )
+                """
+            )
+            _ = conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_gen_logs_date
+                ON schedule_generation_logs (schedule_date)
+                """
+            )
         logger.debug("[ScheduleDB] schema 初始化完成: %s (v%s)", self.db_path, _DB_SCHEMA_VERSION)
 
     def get_state(self, key: str) -> str | None:
@@ -216,6 +234,21 @@ class ScheduleDB:
             (start_date, end_date),
         ).fetchall()
         return [str(row["schedule_date"]) for row in rows]
+
+    def log_generation(
+        self, schedule_date: str, source: str, status: str, detail: str = ""
+    ) -> None:
+        """记录日程生成日志到数据库。"""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._transaction() as conn:
+            _ = conn.execute(
+                """
+                INSERT INTO schedule_generation_logs
+                (schedule_date, source, status, detail, created_at)
+                VALUES (?,?,?,?,?)
+                """,
+                (schedule_date, source, status, detail, now),
+            )
 
     def cleanup_old_schedule_items(self, retention_days: int) -> int:
         """

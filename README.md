@@ -5,16 +5,22 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.6.8-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.6.7-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
 
 ---
 
-> 🚀 **从 v3.5.x 升级到 v3.6.8？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v368)。
+> 🚀 **从 v3.5.x 升级到 v3.6.7？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v366)。
 
-> ✨ **v3.6.8 更新**：手动画图链路改为最终阶段优化模式，并尝试改善部分 `openai-chat` 图片 URL 回收下载兼容性。
+> ✨ **v3.6.7 更新**：
+>
+>1. **修复可能存在的拦截问题：** 请求替换为带有浏览器请求头的`requests`，解决诸如被Cloudflare拦截的问题。
+>同时，对应的`config.toml`也加入了网络请求头设置。默认使用一般的`User-Agent`，并且能够定义`Referer`，支持单个模型、全局启用、自动推断三种方式。
+>
+>
+>2. **修复可能存在的“每次启动时强制覆盖”问题：** 现在插件随麦麦启动、自动检测日程时，如果存在生成的日程将不会再覆盖。同时也在`config.toml`中添加“启动时强制刷新日程”开关。
 
 ---
 
@@ -24,19 +30,19 @@
 >
 > 1. 最初基于原版 [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) 修改，发布为 `selfie_painter`（v3.4.x ~ v3.5.x）
 > 2. 原作者后来将 custom_pic_plugin 升级重构为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)（v3.4.0）
-> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.8）
+> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.7）
 >
 > | 项目 | 链接 |
 > |------|------|
 > | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
 > | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.6.8 |
+> | 当前版本 | v3.6.7 |
 >
 > **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
 
 ---
 
-## 🔄 从 v3.5.x 升级到 v3.6.8
+## 🔄 从 v3.5.x 升级到 v3.6.7
 
 v3.6.8 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
 
@@ -550,6 +556,7 @@ num_inference_steps = 30
 - **A-Dawn** — 感谢对代码问题排查提供的思路，以及 A_MIND 插件带来的灵感启发；感谢提供反重力反代 gemini-3-pro-image 无法使用问题的热修复补丁
 - **XXXxx7258** — 感谢 Mai_Only_You 插件带来的灵感启发
 - **xuqian13** — 内置日程系统基于 [autonomous_planning_plugin](https://github.com/xuqian13/autonomous_planning_plugin) 的设计思路
+- **Cplay00** — v3.6.7 中修复 Cloudflare 拦截问题与启动时强制覆盖日程问题
 
 本插件搜图功能部分代码来自于 https://github.com/XXXxx7258/google_search_plugin
 
@@ -559,18 +566,10 @@ num_inference_steps = 30
 
 ## 📝 更新日志
 
-### v3.6.8 (改版) — 2026-04-24
-
-- 🔧 手动画图链路改为只在最终阶段运行提示词优化器，新增全局 `prompt_optimizer.mode` 与模型级 `optimizer_mode_override`
-- 🔧 收敛手动自拍链中的固定手势/构图拼装，更多画面组织交给最终优化器处理
-- 🔧 尝试改善 `openai-chat` 返回图片 URL 时的下载兼容性，缓解部分图床 `403 Forbidden` 问题
-- 📝 同步插件版本、manifest、config schema 与 README 到 3.6.8
-
 ### v3.6.7 (改版) — 2026-04-24
 
-- 🔧 手动画图链路改为只在最终阶段运行提示词优化器，不再读取旧版 `execution_timing`
-- 🔧 新增全局 `prompt_optimizer.mode = sd|natural_language` 和模型级 `optimizer_mode_override`
-- 🔧 移除手动自拍中的风格专属手部动作池及其随机兜底，构图整理交给最终优化器
+- 🔧 修复可能存在的网络拦截问题：请求替换为带有浏览器请求头的 `requests`，解决诸如被 Cloudflare 拦截的问题；`config.toml` 新增网络请求头设置（User-Agent、Referer 等），支持单个模型、全局启用、自动推断三种方式（by **Cplay00**）
+- 🔧 修复“每次启动时强制覆盖日程”问题：插件启动、自动检测日程时，若已存在生成的日程则不再覆盖；`config.toml` 新增“启动时强制刷新日程”开关（by **Cplay00**）
 - 📝 同步插件版本、manifest、config schema 与 README 到 3.6.7
 
 ### v3.6.6 (改版) — 2026-03-28
