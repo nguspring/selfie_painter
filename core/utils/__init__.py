@@ -25,6 +25,12 @@ from .size_utils import (
 from .cache_manager import CacheManager
 from .time_utils import to_minutes, is_in_time_range
 from .recall_utils import schedule_auto_recall
+from .optimizer_mode import (
+    PromptOptimizerMode,
+    normalize_prompt_optimizer_mode,
+    normalize_prompt_optimizer_override,
+    resolve_effective_prompt_optimizer_mode,
+)
 from .prompt_optimizer import PromptOptimizer, optimize_prompt
 from .runtime_state import runtime_state
 from .role_reference_store import RoleReferenceStore
@@ -57,9 +63,13 @@ __all__ = [
     "runtime_state",
     "schedule_auto_recall",
     "RoleReferenceStore",
+    "PromptOptimizerMode",
     "build_target_context_id",
     "describe_access_rule",
     "is_chat_allowed_for_model",
+    "normalize_prompt_optimizer_mode",
+    "normalize_prompt_optimizer_override",
+    "resolve_effective_prompt_optimizer_mode",
     "to_minutes",
     "validate_image_size",
 ]
