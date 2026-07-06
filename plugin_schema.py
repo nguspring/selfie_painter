@@ -113,15 +113,15 @@ CONFIG_SCHEMA = {
     "plugin": {
         "name": ConfigField(
             type=str,
-            default="麦麦绘卷",
-            description="麦麦绘卷（Claude MAInet）— 智能多模型图片生成插件，支持文生图/图生图自动识别",
+            default="画家麦麦的自拍日常",
+            description="画家麦麦的自拍日常 — 智能多模型图片生成插件，支持文生图/图生图自动识别",
             label="插件名称",
             required=True,
             disabled=True,
             order=1,
         ),
         "config_version": ConfigField(
-            type=str, default="3.6.8", description="插件配置版本号", label="配置版本", disabled=True, order=2
+            type=str, default="3.6.9", description="插件配置版本号", label="配置版本", disabled=True, order=2
         ),
         "enabled": ConfigField(
             type=bool,
@@ -882,6 +882,7 @@ CONFIG_SCHEMA = {
             choices=[
                 "openai",
                 "openai-chat",
+                "tuercha-NAI",
                 "gemini",
                 "doubao",
                 "modelscope",
@@ -1094,6 +1095,7 @@ CONFIG_SCHEMA = {
             choices=[
                 "openai",
                 "openai-chat",
+                "tuercha-NAI",
                 "gemini",
                 "doubao",
                 "modelscope",
@@ -1276,6 +1278,7 @@ CONFIG_SCHEMA = {
             choices=[
                 "openai",
                 "openai-chat",
+                "tuercha-NAI",
                 "gemini",
                 "doubao",
                 "modelscope",
@@ -1458,6 +1461,7 @@ CONFIG_SCHEMA = {
             choices=[
                 "openai",
                 "openai-chat",
+                "tuercha-NAI",
                 "gemini",
                 "doubao",
                 "modelscope",
@@ -1640,6 +1644,7 @@ CONFIG_SCHEMA = {
             choices=[
                 "openai",
                 "openai-chat",
+                "tuercha-NAI",
                 "gemini",
                 "doubao",
                 "modelscope",
@@ -1824,6 +1829,7 @@ MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
         "choices": [
             "openai",
             "openai-chat",
+            "tuercha-NAI",
             "gemini",
             "doubao",
             "modelscope",

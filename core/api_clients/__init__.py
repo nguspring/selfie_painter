@@ -9,6 +9,7 @@
 - Shatangyun 砂糖云格式 (NovelAI)
 - Mengyuai 梦羽AI格式
 - Zai 格式 (Gemini转发)
+- tuercha-NAI 格式 (NewAPI NovelAI chat/completions)
 - ComfyUI 格式 (本地ComfyUI工作流)
 """
 
@@ -24,6 +25,7 @@ from .shatangyun_client import ShatangyunClient
 from .mengyuai_client import MengyuaiClient
 from .zai_client import ZaiClient
 from .comfyui_client import ComfyUIClient
+from .tuercha_nai_client import TuerchaNAIClient
 
 __all__ = [
     'BaseApiClient',
@@ -36,6 +38,7 @@ __all__ = [
     'MengyuaiClient',
     'ZaiClient',
     'ComfyUIClient',
+    'TuerchaNAIClient',
     'ApiClient',
     'get_client_class',
     'generate_image_standalone',
@@ -53,6 +56,8 @@ CLIENT_MAPPING = {
     'mengyuai': MengyuaiClient,
     'zai': ZaiClient,
     'comfyui': ComfyUIClient,
+    'tuercha-NAI': TuerchaNAIClient,
+    'tuercha-nai': TuerchaNAIClient,
 }
 
 

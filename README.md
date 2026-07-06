@@ -5,16 +5,16 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.6.8-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.6.9-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
 
 ---
 
-> 🚀 **从 v3.5.x 升级到 v3.6.8？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v368)。
+> 🚀 **从 v3.5.x 升级到 v3.6.9？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v369)。
 
-> ✨ **v3.6.8 更新**：手动画图链路改为最终阶段优化模式，并尝试改善部分 `openai-chat` 图片 URL 回收下载兼容性。
+> ✨ **v3.6.9 更新**：新增 `tuercha-NAI` 生图接口格式，并修正自动生成 config 的插件名称。
 
 ---
 
@@ -24,21 +24,21 @@
 >
 > 1. 最初基于原版 [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) 修改，发布为 `selfie_painter`（v3.4.x ~ v3.5.x）
 > 2. 原作者后来将 custom_pic_plugin 升级重构为 [mais-art-journal](https://github.com/1021143806/mais-art-journal)（v3.4.0）
-> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.8）
+> 3. 本仓库基于 mais-art-journal 重新合并重构，发布为 `selfie_painter_v2`（v3.6.9）
 >
 > | 项目 | 链接 |
 > |------|------|
 > | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
 > | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.6.8 |
+> | 当前版本 | v3.6.9 |
 >
 > **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
 
 ---
 
-## 🔄 从 v3.5.x 升级到 v3.6.8
+## 🔄 从 v3.5.x 升级到 v3.6.9
 
-v3.6.8 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
+v3.6.9 延续 v3.6.x 的插件结构与配置格式；若你是从 v3.5.x 直接升级，仍需按下述方式重新安装。
 
 **请删除旧版插件目录后重新安装：**
 
@@ -89,6 +89,7 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 |--------|------|------|
 | `openai` | OpenAI / 硅基流动 / Grok / NewAPI 等 | 通用 `/images/generations` 接口 |
 | `openai-chat` | 支持生图的 Chat 模型 | 通过 `/chat/completions` 生图，支持 SSE 流式响应 |
+| `tuercha-NAI` | tuercha / NewAPI NovelAI | 通过 `/chat/completions` 承载 NovelAI 绘图 JSON，支持文生图和现有单图参考图生图 |
 | `doubao` | 豆包（火山引擎） | 使用 Ark SDK |
 | `gemini` | Google Gemini | 原生 `generateContent` 接口 |
 | `modelscope` | 魔搭社区 | 异步任务模式，自动轮询结果 |
@@ -328,6 +329,29 @@ access_mode = "blacklist"                 # 模型访问模式：默认黑名单
 access_list = ["qq:114514:private"]       # 该模型自己的聊天流名单
 ```
 
+#### tuercha-NAI 配置示例
+
+`tuercha-NAI` 使用 `/chat/completions`，所以 `base_url` 必须填到 `/v1`，插件会在后面自动拼接 `/chat/completions`。
+
+```toml
+[models.nai]
+name = "tuercha NAI"
+base_url = "https://你的-newapi-地址/v1"
+api_key = "Bearer 你的密钥"
+format = "tuercha-NAI"
+model = "nai-diffusion-4-5-full"
+fixed_size_enabled = true
+default_size = "832x1216"
+seed = -1
+guidance_scale = 5
+num_inference_steps = 23
+sampler = "k_euler_ancestral"
+noise_schedule = "karras"
+cfg = 0.5
+negative_prompt_add = "lowres, bad anatomy, bad hands, text, watermark"
+support_img2img = true
+```
+
 ### 聊天流黑白名单
 
 ```toml
@@ -477,6 +501,7 @@ num_inference_steps = 30
 | 硅基流动 | `https://api.siliconflow.cn/v1` | `openai` |
 | 豆包 | `https://ark.cn-beijing.volces.com/api/v3` | `doubao` |
 | OpenAI | `https://api.openai.com/v1` | `openai` |
+| tuercha / NewAPI NovelAI | `https://你的-newapi-地址/v1` | `tuercha-NAI` |
 | 本地 ComfyUI | `http://127.0.0.1:8188` | `comfyui` |
 
 ## 魔搭链接及教程
@@ -558,6 +583,12 @@ num_inference_steps = 30
 ---
 
 ## 📝 更新日志
+
+### v3.6.9 (改版) — 2026-07-06
+
+- ✨ 新增 `tuercha-NAI` API 格式，通过 `/chat/completions` 承载 NovelAI 绘图 JSON
+- 🔧 修正自动生成 `config.toml` 的插件名称为“画家麦麦的自拍日常”
+- 📝 同步插件版本、manifest、config schema 与 README 到 3.6.9
 
 ### v3.6.8 (改版) — 2026-04-24
 
