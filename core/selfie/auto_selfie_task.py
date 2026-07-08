@@ -368,10 +368,19 @@ class AutoSelfieTask:
 
                 if outfit_prompt:
                     logger.info("Wardrobe: 选择穿搭 → %s", outfit_prompt)
-                    if not bot_appearance:
-                        bot_appearance = outfit_prompt
+                    # 翻译中文穿搭为英文 SD 标签，避免 NovelAI 等拒绝 CJK 的模型以 400 失败
+                    from ..wardrobe.translator import translate_wardrobe_outfit_prompt
+
+                    outfit_prompt_clean = await translate_wardrobe_outfit_prompt(
+                        outfit_prompt, self.get_config, "[AutoSelfie]"
+                    )
+                    if outfit_prompt_clean:
+                        if not bot_appearance:
+                            bot_appearance = outfit_prompt_clean
+                        else:
+                            bot_appearance = f"{bot_appearance}, {outfit_prompt_clean}"
                     else:
-                        bot_appearance = f"{bot_appearance}, {outfit_prompt}"
+                        logger.info("Wardrobe: 穿搭翻译失败或含 CJK 无法处理，跳过注入: %s", outfit_prompt)
                 else:
                     logger.debug("Wardrobe: 未匹配到穿搭")
         except Exception as exc:

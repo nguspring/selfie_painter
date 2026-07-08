@@ -577,57 +577,14 @@ class SelfiePainterAction(BaseAction):
         return validate_image_size(size)
 
     async def _translate_wardrobe_outfit_prompt(self, outfit_prompt: str) -> str:
-        """将衣柜返回的中文穿搭短语转换为适合 SD 的英文提示词。"""
-        outfit_prompt_clean: str = outfit_prompt.strip()
-        if not outfit_prompt_clean:
-            return ""
+        """将衣柜返回的中文穿搭短语转换为适合 SD 的英文提示词。
 
-        has_cjk: bool = any("\u4e00" <= ch <= "\u9fff" for ch in outfit_prompt_clean)
-        if not has_cjk:
-            return outfit_prompt_clean
+        委托给公共翻译模块，与自动自拍链路共用同一套翻译逻辑，
+        避免中文穿搭被 NovelAI 等拒绝 CJK 的模型以 400 错误回退。
+        """
+        from .wardrobe.translator import translate_wardrobe_outfit_prompt
 
-        predefined_map: dict[str, str] = {
-            "哥特洛丽塔": "gothic lolita dress, frilled lace, elegant dark fashion",
-            "宽松休闲装": "oversized casual outfit, relaxed everyday wear",
-            "黑丝JK": "school uniform, black stockings, pleated skirt",
-            "白丝JK": "school uniform, white stockings, pleated skirt",
-            "连衣裙": "floral dress",
-            "短裙": "short skirt, stylish casual outfit",
-            "机能风服装": "techwear outfit, functional fashion",
-            "可爱服装": "cute outfit, soft fashion details",
-            "可爱睡衣": "cute pajamas, cozy sleepwear",
-            "运动服": "sportswear, athletic outfit",
-            "实验服": "lab coat, research outfit",
-            "雨衣": "raincoat, weatherproof outerwear",
-            "洛丽塔": "lolita dress, elegant frills",
-        }
-        mapped_prompt: str = predefined_map.get(outfit_prompt_clean, "")
-        if mapped_prompt:
-            logger.info(f"{self.log_prefix} 衣柜：中文穿搭命中本地映射 → {outfit_prompt_clean} => {mapped_prompt}")
-            return mapped_prompt
-
-        try:
-            logger.info(f"{self.log_prefix} 衣柜：检测到中文穿搭，尝试翻译为英文提示词 → {outfit_prompt_clean}")
-            translate_success, translated_outfit = await optimize_prompt(
-                outfit_prompt_clean,
-                log_prefix=f"{self.log_prefix} [wardrobe-translate]",
-                scene_only=False,
-                custom_api_base_url=str(self.get_config("prompt_optimizer.custom_api_base_url", "")),
-                custom_api_key=str(self.get_config("prompt_optimizer.custom_api_key", "")),
-                custom_api_model=str(self.get_config("prompt_optimizer.custom_api_model", "")),
-            )
-        except Exception as translate_exc:
-            logger.warning(f"{self.log_prefix} 衣柜：翻译中文穿搭失败，跳过直接注入: {translate_exc}")
-            return ""
-
-        translated_outfit_clean: str = translated_outfit.strip() if isinstance(translated_outfit, str) else ""
-        translated_has_cjk: bool = any("\u4e00" <= ch <= "\u9fff" for ch in translated_outfit_clean)
-        if translate_success and translated_outfit_clean and not translated_has_cjk:
-            logger.info(f"{self.log_prefix} 衣柜：中文穿搭已翻译为英文提示词 → {translated_outfit_clean}")
-            return translated_outfit_clean
-
-        logger.info(f"{self.log_prefix} 衣柜：翻译结果不可用，跳过直接注入 → {outfit_prompt_clean}")
-        return ""
+        return await translate_wardrobe_outfit_prompt(outfit_prompt, self.get_config, self.log_prefix)
 
     async def _process_selfie_prompt(
         self,

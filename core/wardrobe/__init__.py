@@ -13,6 +13,7 @@ from .selector import (
     save_temp_override,
     select_outfit_from_schedule,
 )
+from .translator import translate_wardrobe_outfit_prompt
 
 __all__ = [
     "build_simple_wardrobe_config",
@@ -20,4 +21,5 @@ __all__ = [
     "load_temp_override",
     "save_temp_override",
     "select_outfit_from_schedule",
+    "translate_wardrobe_outfit_prompt",
 ]
