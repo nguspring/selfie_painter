@@ -53,6 +53,11 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 重启 MaiBot 后会自动生成默认 `config.toml`，按 [新手快速配置指南](#-新手快速配置指南) 配置即可。
 
 > ⚠️ 旧版 `config.toml` 的配置项名称和结构已大幅变动，无法直接复用。建议参考旧配置手动填写新配置中对应的 API 密钥和模型信息。
+
+> 🔁 **重要：插件成功加载后，需再重启一次麦麦**
+> 本插件在首次加载时会**动态追加画图模型相关配置项**到 `config.toml`（即配置文件是在插件加载完成之后才写入新模型条目的）。
+> 因此麦麦在**第一次**读到的是尚未包含这些新配置的状态。
+> **正确做法**：插件成功加载、生成/更新 `config.toml` 之后，**请再重启一次 MaiBot**，画图模型才会被正常读取并生效。只重启一次是不够的。
 ---
 
 ## ⚠️ 已知问题
@@ -60,6 +65,7 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 | 问题 | 状态 | 说明 |
 |------|------|------|
 | 与旧版 `selfie_painter` 同时启用时会出现组件注册冲突 | ⚠️ 需手动规避 | `selfie_painter_v2` 与旧版共存时，`draw_picture`、`pic_config_command`、`pic_style_command`、`pic_generation_command` 会因组件名重复而冲突。请停用或移除旧版 `selfie_painter` 后再测试本插件 |
+| 首次加载后画图模型读不到 | ⚠️ 需再重启一次 | 插件首次加载会动态追加画图模型配置到 `config.toml`，麦麦第一次读到的是未含新配置的状态。**插件成功加载后，请再重启一次 MaiBot**，画图模型才能正常读取生效 |
 
 ---
 

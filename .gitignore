@@ -10,6 +10,8 @@ test/*
 # 忽略特定文件
 config*.toml
 !config.toml.example
+# 运行时自动生成的配置备份文件
+config.toml.backup.*
 图像到图像（简易）.json
 文生图（效果最好的一个）.json
 .env
