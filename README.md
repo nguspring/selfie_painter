@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.6.10-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.6.11-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
@@ -14,7 +14,7 @@
 
 > 🚀 **从 v3.5.x 升级到 v3.6.9？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v369)。
 
-> ✨ **v3.6.9 更新**：新增 `tuercha-NAI` 生图接口格式，并修正自动生成 config 的插件名称。
+> ✨ **v3.6.11 更新**：手动画图提示词优化器新增 `nai` 模式；魔搭文生图会尝试发送采样器；默认魔搭模型扩展为六个，并为每个模型配置匹配的提示词模式、CFG、步数、分辨率和采样器。
 
 ---
 
@@ -30,7 +30,7 @@
 > |------|------|
 > | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
 > | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.6.9 |
+> | 当前版本 | v3.6.11 |
 >
 > **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
 
@@ -85,7 +85,7 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 ### 🎯 智能图片生成
 - **自动模式识别**：智能判断文生图或图生图模式
 - **自拍模式**：支持 standard（前置自拍）/ mirror（对镜自拍）/ photo（第三人称照片）三种风格
-- **提示词优化**：自动将中文描述优化为专业英文 SD 提示词
+- **提示词优化**：支持 NAI 标签、SD 标签和自然英文三种手动画图优化模式
 - **结果缓存**：默认关闭，按需开启后可复用相同参数的结果
 - **自动撤回**：可按模型配置延时撤回
 
@@ -103,6 +103,21 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 | `mengyuai` | 梦羽 AI | 不支持图生图 |
 | `zai` | Zai (Gemini 转发) | OpenAI 兼容 |
 | `comfyui` | 本地 ComfyUI | 加载工作流 JSON，替换占位符，轮询结果 |
+
+#### v3.6.11 默认魔搭模型
+
+首次生成配置时，插件会写入以下六个魔搭模型。所有模型均固定 `1024x1024`；`name` 是界面和 `/dr list` 显示名称，`model` 是实际发送给 API 的模型标识。
+
+| 模型 ID | 显示名称 | 模型标识 | 优化模式 | CFG / 步数 | 采样器 |
+|---|---|---|---|---|---|
+| `model1` | Krea-2-Turbo | `krea/Krea-2-Turbo` | `natural_language` | 1 / 8 | `Euler` |
+| `model2` | Z-Image-Turbo | `Tongyi-MAI/Z-Image-Turbo` | `natural_language` | 1 / 12 | `Euler` |
+| `model3` | WAI-illustrious-SDXL-v17 | `HingXuan/WAI-illustrious-SDXL-v17` | `sd` | 6 / 30 | `Euler a` |
+| `model4` | ChenkinNoob-XL-V0.5 | `ChenkinNoob/ChenkinNoob-XL-V0.5` | `sd` | 6 / 30 | `Euler a` |
+| `model5` | MiaoMiao RealSkin EPS-v1.3 | `mixLine/miaomiaoRealskin` | `sd` | 6 / 30 | `Euler a` |
+| `model6` | MiaoMiao Harem v1.9 | `qsdq2423432/miaomiaoHarem_v19` | `sd` | 6 / 30 | `Euler a` |
+
+魔搭文生图会尝试把配置中的 `sampler` 作为公开 API 的顶层字段发送。可选的魔搭界面名称包括 `Euler`、`Euler a`、`DPM++ 2M Karras`、`DPM++ 2M SDE Karras`、`DPM++ 2S a Karras` 和 `DPM++ SDE Karras`。魔搭公开 API 文档尚未列出该字段，服务端是否接受须以实际生图结果为准；图生图不会发送该字段。
 
 ### 🎨 /dr 命令系统
 
@@ -407,7 +422,7 @@ custom_scenes = ["睡觉的时候穿可爱睡衣", "运动的时候穿运动服"
 ```toml
 [prompt_optimizer]
 enabled = true
-mode = "sd"                       # sd=最终输出 SD 标签风格；natural_language=最终输出自然语言英文短语
+mode = "sd"                       # nai=NAI 标签；sd=SD 标签；natural_language=自然英文短语
 custom_api_base_url = ""          # 留空使用 MaiBot 主 LLM
 custom_api_key = ""
 custom_api_model = ""
@@ -419,6 +434,7 @@ custom_api_model = ""
 |---|---|---|
 | `sd` | **默认，推荐给 SD / 标签流模型** | 在手动画图链路的最终阶段运行，对已经拼好的提示词做规范化：去重、排序、补全质量 tag、中文翻译，并保留自拍/衣柜/构图信息。 |
 | `natural_language` | 更适合偏自然语言理解的生图后端 | 同样只在手动画图链路的最终阶段运行，但会把最终提示词整理成更自然的英文短语，而不是偏 SD 的 tag 串。 |
+| `nai` | NovelAI 或兼容 NAI 标签权重的模型 | 输出平铺英文 tag，并使用 NAI 权重语法；不输出质量词或画师名。 |
 
 > ⚠️ **手动画图链路现在只使用最终阶段优化器**：不再读取旧版 `execution_timing`，也不再在手动链路里提前做一次 `before` 优化。这样 `/dr <style>`、衣柜翻译、自拍构图和角色参考图都能先完整拼装，再统一交给最终优化器收口。
 
@@ -426,10 +442,11 @@ custom_api_model = ""
 
 ```toml
 [models.model1]
-optimizer_mode_override = "follow_global"  # follow_global / sd / natural_language
+optimizer_mode_override = "follow_global"  # follow_global / nai / sd / natural_language
 ```
 
 - `follow_global`：跟随 `[prompt_optimizer].mode`
+- `nai`：该模型强制使用 NAI 标签模式
 - `sd`：该模型强制使用 SD 标签模式
 - `natural_language`：该模型强制使用自然语言模式
 

@@ -97,10 +97,17 @@ class SelfiePainterV2Plugin(PluginRuntimeMixin, BasePlugin):
                     model_keys.append(key)
                     model_names[key] = val.get("name", key)  # 没有 name 就用 key
 
-        # 如果 config.toml 不存在或为空，至少保证 model1 存在（兜底）
+        # 配置文件尚未生成时，使用内置 schema 的模型节，避免首次启动只显示 model1。
         if not model_keys:
-            model_keys = ["model1"]
-            model_names["model1"] = "模型1"
+            model_keys = [
+                section.removeprefix("models.")
+                for section in self_any.config_schema
+                if section.startswith("models.")
+            ]
+            for key in model_keys:
+                fields = self_any.config_schema.get(f"models.{key}", {})
+                name_field = fields.get("name") if isinstance(fields, dict) else None
+                model_names[key] = name_field.default if isinstance(name_field, ConfigField) else key
 
         # ── 2.5 动态收集 wardrobe.outfits ──
         # 目标：

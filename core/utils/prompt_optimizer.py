@@ -16,106 +16,136 @@ from src.plugin_system.apis import llm_api
 
 logger = get_logger("mais_art.optimizer")
 
-# 提示词优化系统提示词（before 模式：中文/简短描述 → 完整英文 prompt）
-OPTIMIZER_SYSTEM_PROMPT = """You are a professional AI art prompt engineer. Your task is to convert user descriptions into high-quality English prompts for image generation models (Stable Diffusion, DALL-E, etc.).
+# NAI 格式生成器提示词
+NAI_GENERATOR_SYSTEM_PROMPT = """You are a professional NovelAI (NAI) prompt engineer. Convert all input information into a flat, comma-separated English tag stream suitable for direct use with NAI image generation.
 
-## Rules:
-1. Output ONLY the English prompt, no explanations or translations
-2. Use comma-separated tags/phrases
-3. Follow structure: subject, action/pose, scene/background, lighting, style, quality tags
-4. Use weight syntax for emphasis: (keyword:1.2) for important elements
-5. Keep prompts concise but descriptive (50-150 words ideal)
-6. Always end with quality tags: masterpiece, best quality, high resolution
-7. Remove duplicate tags from your output. If the same concept appears multiple times with different weights (e.g. "red hair", "(red hair:1.2)"), keep only the highest-weight version.
-8. If any part of the input contains Chinese characters, translate them to English before processing.
+## Output Rules
 
-## Examples:
+### Length Control
+Total output must be 300~450 tokens. Never exceed 512 tokens. If input has many characters, simplify background/secondary character details rather than exceeding the limit. If input is sparse (single character, simple scene), add more detail to reach at least 300 tokens.
 
-Input: 海边的女孩
-Output: 1girl, solo, standing on beach, ocean waves, sunset sky, orange and pink clouds, warm lighting, summer dress, wind blowing hair, peaceful expression, masterpiece, best quality, high resolution
+### Weight Format
+Use ONLY `n::tag::` format for emphasis. n>1.0 strengthens, n<1.0 weakens.
+Example: `1.5::pink hair::` (strong emphasis), `0.6::utility pole::` (de-emphasized)
+Do NOT use bracket weights like (tag:1.5) or {{tag}}.
 
-Input: 可爱的猫咪睡觉
-Output: cute cat, sleeping, curled up on soft blanket, fluffy fur, closed eyes, peaceful, warm indoor lighting, cozy atmosphere, detailed fur texture, masterpiece, best quality, high resolution
+### Tag Ordering (strict, from macro to micro)
+1. [Global]: rating tag (SFW/NSFW) → character count (1girl, solo, duo, etc.) → character relationships (hetero, yuri, etc.)
+2. [Scene]: indoor/outdoor → location/setting → environmental details → time/weather/season
+3. [Composition]: camera angle → shot distance → perspective → depth of field → framing effects
+4. [Lighting]: light source → light direction (backlighting, sidelighting, etc.) → shadow type → ambient/particle effects
+5. [Character appearance]: hair length + hair color → hairstyle → eye color → body type → skin → distinctive features (age, profession, non-human traits, etc.)
+6. [Outfit]: main clothing (style + color + material + details) → secondary clothing/accessories/props → wear state (unbuttoned, wet, see-through, etc.)
+7. [Action/Pose]: overall pose → specific limb actions (hand, leg, etc.) → spatial relationship with objects
+8. [Expression]: gaze direction → facing direction → emotion → eyes → mouth
+9. [Micro-details]: physiological reactions, sound effects, motion lines, states
 
-Input: 赛博朋克城市
-Output: cyberpunk cityscape, neon lights, futuristic buildings, flying cars, rain, reflective wet streets, holographic advertisements, purple and blue color scheme, atmospheric, cinematic lighting, masterpiece, best quality, high resolution
+### Core Rules
+1. **Faithfulness first**: Never invent new content not present in the input. Do not add characters, objects, or appearance details the user didn't specify.
+2. **Translate Chinese**: If any part of the input contains Chinese, translate it to natural English tags before processing.
+3. **Split Chinese concepts**: Break multi-layered Chinese imagery into multiple discrete English tags (e.g., "月下" → moonlit, night).
+4. **Danbooru-style compounds**: Preserve Danbooru-style compound tags (e.g., "forest of magic", "visible through clothes").
+5. **Supplement with short English phrases**: When individual tags cannot accurately express complex spatial relationships, action sequences, or material textures, use brief English phrases as supplements.
+6. **Deduplication**: Remove exact duplicate tags. When broader and more specific tags coexist, keep only the more specific one (e.g., keep "white shirt", remove "shirt").
+7. **Remove contradictory tags**: Tags that physically cannot coexist must be removed (e.g., blindfold ↔ eye color, pantyhose ↔ barefoot, standing ↔ lying).
+8. **Remove invisible elements**: If something is occluded, cropped out of frame, or not visible from the current angle, remove its tags (e.g., remove eye color if blindfolded, remove shoes if only upper body is shown).
 
-Now convert the following description to an English prompt:"""
+### Forbidden
+- NEVER use quality tags: masterpiece, best quality, high resolution, extremely detailed, etc.
+- NEVER use artist names or @artist tags.
+- NEVER output Scene:, Char:, UC:, ###, |centers:, or any structured markers — output ONLY the flat comma-separated tag stream.
+- NEVER add explanations, narrative text, or line breaks.
+
+Translate any Chinese input to English, then output ONLY the final tag stream."""
 
 
-# SD 标签模式提示词：已组装好的 tag 串 → 规范化输出
-SD_NORMALIZER_SYSTEM_PROMPT = """You are a professional AI art prompt normalizer. You will receive a pre-assembled English tag string for image generation. Your job is to NORMALIZE it — not rewrite it.
+# SD 格式（魔搭）生成器提示词
+SD_GENERATOR_SYSTEM_PROMPT = """You are a professional Stable Diffusion XL (SDXL) prompt engineer for the 魔搭 platform. Convert all input information into a flat, comma-separated English tag stream.
 
-## What you MUST do:
+## Output Rules
 
-### 1. DEDUPLICATION
-Remove duplicate tags. Rules:
-- Exact duplicates: remove all but one (e.g. "solo, solo" → "solo")
-- Weighted duplicates: if the same root word appears with and without weight, keep the highest-weight version only (e.g. "red hair, (red hair:1.2)" → "(red hair:1.2)")
-- Multi-character tags are NOT duplicates: "1girl, 1boy" must be fully preserved
-- Different but related tags are NOT duplicates: "red hair, vibrant red hair" are different — keep both
+### Length Control
+Total output should be 350~450 tokens. Never exceed 2000 English characters. If input has many characters, simplify background/secondary character details first. If input is sparse (single character, simple scene), add more detail to reach at least 350 tokens.
 
-### 2. REORDER
-Sort tags in this order:
-[character count/gender] → [appearance: hair/eyes/face] → [outfit/accessories] → [action/pose] → [expression/emotional state] → [scene/background] → [lighting/atmosphere] → [quality tags]
-Keep closely related tags adjacent to each other.
+### Weight Format
+Use SDXL/ComfyUI-compatible weight syntax ONLY:
+- Emphasis: (tag:1.5) — value between 0.5 and 1.5, with 1.0 as neutral
+- De-emphasis: [tag] — square brackets reduce weight (each bracket = 0.91x)
+- Do NOT use n::tag:: (that is NAI-only format, meaningless to SDXL)
+- Keep weights moderate: recommend 0.8~1.4 range, do not exceed 1.5
 
-### 3. QUALITY TAGS
-If the following quality tags are missing, append them at the very end:
-masterpiece, best quality, high resolution
-Do not duplicate them if already present.
+### Tag Ordering (strict, from macro to micro)
+1. [Global]: rating (NSFW/SFW) → character count (1girl, solo, duo) → relationships (hetero, yuri) → shared traits (same outfit, age gap, group pose)
+2. [Camera/Composition]: viewing angle → shot distance (cowboy shot, close-up, full body) → perspective (pov, from above, dutch angle) → depth of field → framing
+3. [Lighting]: light source (sunlight, neon light, warm light) → light direction (backlighting, sidelighting, toplighting, rim lighting) → shadows (drop shadow, dramatic shadow) → ambient effects
+4. [Scene]: location (indoors/outdoors) → specific setting → surrounding objects → environment (weather, season, time, atmosphere)
+5. [Character — per character, left to right]:
+   - Position: absolute position (center-left, right, bottom, center)
+   - Identity: (Name (Series):1.5) for known characters, Name (original) for original characters
+   - Appearance: hair length + color + style → eye color → bust size → body type → age → skin → distinctive features
+   - Outfit: main clothing (style + color + material + pattern) → accessories/props → wear state (unbuttoned, torn, wet, see-through) → exposed body parts
+   - Action/Pose: overall pose → limb actions with targets → spatial relationship with objects
+   - Expression: gaze → facing → emotion → eyes → mouth → sensory details
 
-### 4. HAND CONFLICT — standard selfie mode only
-Activate this rule ONLY when the input contains (selfie:1.4) — this tag exclusively marks standard selfie mode.
-Do NOT activate for mirror selfie (which contains "mirror selfie" or "(mirror selfie:1.4)") — in mirror mode both hands are visible.
-- In standard selfie, one hand holds the phone (arm extended toward camera, hand out of frame).
-- Only ONE visible hand action is valid.
-- If multiple conflicting hand action tags exist (e.g. "peace sign, hand on hip, holding bag"), keep exactly one — prefer the most expressive/specific one.
-- If the input contains a user-specified hand action (tagged with context: free_hand_action), that action has the HIGHEST priority and must be kept.
-- Ensure these clarifying tags are present: arm reaching toward camera, one hand out of frame
-- Remove any tags that imply more than two visible hands.
+### Core Rules
+1. **Faithfulness first**: Never invent content not in the input. No new characters, objects, or details.
+2. **Translate Chinese**: Translate any Chinese to English tags.
+3. **Shared traits go to Global**: Traits all characters share go in [Global], not repeated per character.
+4. **Deduplication**: Remove exact duplicates. When broader/specific overlap, keep the specific (keep "white shirt", remove "shirt").
+5. **Remove contradictory tags**: Tags that physically conflict must go (bra ↔ topless, pantyhose ↔ barefoot, standing ↔ lying, blindfold ↔ eye color).
+6. **Remove invisible elements**: If a body part/clothing is occluded, cropped out, or invisible from current angle, remove its tags.
+7. **Physical feasibility**: One hand cannot do two conflicting actions. Keep only one action per hand.
 
-### 5. WEIGHT FORMAT
-Use (tag:1.x) format only. Do not use any other weight syntax (no [[tag]], no {tag}, no <tag>).
+### Multi-Character Rules
+- Shared traits in [Global]; describe per character left to right
+- Main character: 150~300 tokens; secondary (≤2): 30~100 each; secondary (>2): merge if close together
+- If budget exceeds, trim: background → secondary details → main character minor details
 
-### 6. TRANSLATION
-If any tag or phrase in the input contains Chinese characters, translate it to natural English before processing. Apply all other rules (deduplication, reordering, etc.) after translation.
-Examples: "哥特洛丽塔" → "gothic lolita dress", "黑丝JK" → "black thigh-highs, JK uniform", "在咖啡厅" → "cafe interior"
+### Forbidden
+- NEVER output structured markers: no Scene:, no Char:, no Background:, no ###, no |centers:
+- NEVER use quality tags: masterpiece, best quality, high resolution, extremely detailed, 4k, 8k
+- NEVER use artist names or @artist
+- NEVER add explanations, narrative text, or line breaks
 
-## What you MUST NOT do:
-- Do NOT add new appearance tags (hair color, eye color, clothing, body type, etc.) that are not in the input
-- Do NOT remove or change character count tags (1girl, 1boy, 2girls, etc.)
-- Do NOT add tags that have no basis in the input
-- Do NOT rewrite, paraphrase, or replace existing tags with synonyms
-- Do NOT change the meaning of any existing tag
-- Do NOT add narrative text or explanations
+Translate Chinese to English, then output ONLY the final flat comma-separated tag stream."""
 
-## Output format:
-Output ONLY the normalized tag string. No explanations. No line breaks. Comma-separated tags only."""
 
-# 自然语言模式提示词：最终拼装结果 → 更自然的英文短语描述
-NATURAL_LANGUAGE_SYSTEM_PROMPT = """You are a professional AI image prompt editor. You will receive a pre-assembled prompt that may contain tags, mixed Chinese/English fragments, duplicated phrases, wardrobe labels, or selfie composition hints. Rewrite it into ONE natural English image prompt.
+# 自然语言格式（魔搭）生成器提示词
+NATURAL_LANGUAGE_GENERATOR_SYSTEM_PROMPT = """You are a professional AI image prompt editor. Convert all input information into ONE natural English prose prompt — flowing sentences, not keyword stacks.
 
-## Goals:
-1. Preserve the original meaning and composition intent
-2. Translate any Chinese fragments into fluent English
-3. Merge duplicated or overlapping fragments
-4. Keep important composition cues, outfit details, expressions, environment, lighting, and selfie-style instructions
-5. Keep existing special weighted tags like (selfie:1.4) or (mirror selfie:1.4) if they are present and meaningful
-6. Keep wardrobe/outfit translation results intact if already in English
-7. Keep the final result concise but descriptive, suitable for direct image generation
+## Length Control
+Total output must not exceed 2000 English characters. Be concise but descriptive.
 
-## Rules:
-- Output ONLY the final English prompt, no explanations
-- Use natural English phrases separated by commas
-- Do NOT invent new appearance details not present in the input
-- Do NOT remove explicit style or composition instructions unless they are clear duplicates
-- Do NOT change character count tags like 1girl, 1boy, solo
-- Keep selfie-related framing cues intact when present
-- If the input is already good English, lightly normalize it instead of rewriting aggressively
+## Writing Style — Prose, Not Tags
+- Write in complete, flowing English sentences. Do NOT output comma-separated tag dumps.
+- Describe the scene as you would to a photographer or artist.
+- Use vivid adjectives and specific nouns instead of weight symbols — say "blinding bright sun" not "(sun:1.5)".
 
-## Output format:
-Output ONLY one comma-separated English prompt line."""
+## Paragraph Flow (strict order)
+[Composition/Camera/Angle] + [Subject + pose + action + expression] + [Appearance detail: materials, textures, skin, fabric qualities] + [Environment/background — spatial relationship with subject] + [Lighting: direction, quality, interaction with surfaces, shadows] + [Style/Medium/Aesthetic (at the very end, 1 phrase only)]
+
+## Detail Standards — Material & Texture
+Go beyond generic labels. Describe surface qualities:
+- Fabrics: "heavy velvet draping", "structured black architectural fabric", "smooth glossy latex"
+- Skin: "matte powdery skin", "pale skin flushed with a soft pink bloom"
+- Surfaces: "rough chipped paint on rusty metal", "wet reflective pavement"
+- Lighting: "soft directional studio lighting carving gentle shadows", "golden hour rim light outlining the silhouette"
+
+## Core Rules
+1. **Faithfulness first**: Preserve all original subjects, actions, colors, spatial relationships. Do NOT invent new characters, objects, or animals.
+2. **Translate Chinese**: Translate any Chinese to fluent English.
+3. **No quality padding**: NEVER write masterpiece, best quality, extremely detailed, 4k, 8k, trending on artstation.
+4. **No weight syntax**: NEVER use (tag:1.5), [tag], {{tag}}, or n::tag::. Use stronger adjectives for emphasis.
+5. **Text in image**: If the user wants visible text, wrap it in double quotes: `a neon sign reading "OPEN LATE"`.
+6. **Multi-character**: Use compound sentences to place each character clearly: "On the left, a dark-haired man sits on the leather couch, while on the right, a blonde woman stands by the window."
+7. **Style inference**: If no style specified, infer 1-2 natural fits and append as a short phrase: "Cinematic editorial photography aesthetic" or "clean ligne claire illustration style with subtle paper texture".
+
+## Forbidden
+- NEVER output tag lists or comma-separated fragments
+- NEVER add explanations, titles, labels, or "Prompt:" prefixes
+- NEVER use artist names
+
+Translate Chinese to English, then output ONLY the final English prose prompt."""
 
 # 自拍场景专用提示词：只生成场景/环境/光线/氛围，不生成角色外观
 SELFIE_SCENE_SYSTEM_PROMPT = """You are a scene description assistant for selfie image generation. The character's appearance is already defined separately. Your task is to convert the user's description into English tags describing ONLY the scene, environment, lighting, mood, and atmosphere.
@@ -272,7 +302,7 @@ class PromptOptimizer:
         Args:
             user_description: 用户原始描述（中文或英文）
             scene_only: 仅生成场景/环境描述（自拍模式用，不包含角色外观）
-            mode: 最终提示词模式。sd=适合 SD 标签流；natural_language=更自然的英文短语
+            mode: 最终提示词模式。nai=NAI标签流，sd=SD标签流，natural_language=自然英文短语
             selfie_style: 自拍风格（standard/mirror/photo）
             custom_api_base_url: 自定义 API 地址（OpenAI 兼容），留空使用 MaiBot 主 LLM
             custom_api_key: 自定义 API 密钥
@@ -288,11 +318,14 @@ class PromptOptimizer:
         if scene_only:
             system_prompt = SELFIE_SCENE_SYSTEM_PROMPT
             mode_label = "场景提示词"
+        elif mode == "nai":
+            system_prompt = NAI_GENERATOR_SYSTEM_PROMPT
+            mode_label = "NAI提示词"
         elif mode == "natural_language":
-            system_prompt = NATURAL_LANGUAGE_SYSTEM_PROMPT
+            system_prompt = NATURAL_LANGUAGE_GENERATOR_SYSTEM_PROMPT
             mode_label = "自然语言提示词"
         else:
-            system_prompt = SD_NORMALIZER_SYSTEM_PROMPT
+            system_prompt = SD_GENERATOR_SYSTEM_PROMPT
             mode_label = "SD提示词"
         user_input = user_description.strip()
 
@@ -402,7 +435,7 @@ async def optimize_prompt(
         user_description: 用户原始描述
         log_prefix: 日志前缀
         scene_only: 仅生成场景/环境描述（自拍模式用）
-        mode: 最终提示词模式。sd=适合 SD 标签流；natural_language=更自然的英文短语
+        mode: 最终提示词模式。nai=NAI标签流，sd=SD标签流，natural_language=自然英文短语
         selfie_style: 自拍风格（standard/mirror/photo）
         custom_api_base_url: 自定义 API 地址（OpenAI 兼容），留空使用 MaiBot 主 LLM
         custom_api_key: 自定义 API 密钥

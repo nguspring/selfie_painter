@@ -6,8 +6,8 @@ from typing import Any, Callable
 
 PromptOptimizerMode = str
 
-VALID_PROMPT_OPTIMIZER_MODES: tuple[str, ...] = ("sd", "natural_language")
-VALID_PROMPT_OPTIMIZER_OVERRIDES: tuple[str, ...] = ("follow_global", "sd", "natural_language")
+VALID_PROMPT_OPTIMIZER_MODES: tuple[str, ...] = ("nai", "sd", "natural_language")
+VALID_PROMPT_OPTIMIZER_OVERRIDES: tuple[str, ...] = ("follow_global", "nai", "sd", "natural_language")
 
 
 def normalize_prompt_optimizer_mode(value: Any, default: PromptOptimizerMode = "sd") -> PromptOptimizerMode:

@@ -5,7 +5,7 @@ import time
 import base64
 from typing import Dict, Any, Tuple, Optional
 
-from .base_client import BaseApiClient, logger, get_requests_module
+from .base_client import BaseApiClient, NonRetryableError, logger, get_requests_module
 
 
 class ModelscopeClient(BaseApiClient):
@@ -52,6 +52,7 @@ class ModelscopeClient(BaseApiClient):
             steps = model_config.get("num_inference_steps", 30)
             negative_prompt = model_config.get("negative_prompt_add", "")
             seed = model_config.get("seed", 42)
+            sampler = model_config.get("sampler")
 
             # 根据是否有输入图片，构建不同的请求参数
             if input_image_base64:
@@ -67,6 +68,8 @@ class ModelscopeClient(BaseApiClient):
                 request_data["seed"] = seed
                 request_data["steps"] = steps
                 request_data["guidance"] = guidance
+                if sampler:
+                    request_data["sampler"] = sampler
                 logger.info(f"{self.log_prefix} (魔搭) 使用文生图模式")
 
             logger.info(f"{self.log_prefix} (魔搭) 发起异步图片生成请求，模型: {model_name}")
@@ -91,6 +94,9 @@ class ModelscopeClient(BaseApiClient):
             if response.status_code != 200:
                 error_msg = response.text
                 logger.error(f"{self.log_prefix} (魔搭) 请求失败: HTTP {response.status_code} - {error_msg}")
+                # 携带 sampler 的文生图请求被拒绝时，重复发送不会改变结果。
+                if sampler and not input_image_base64 and 400 <= response.status_code < 500:
+                    raise NonRetryableError(f"请求失败: {error_msg[:100]}")
                 return False, f"请求失败: {error_msg[:100]}"
 
             # 获取任务ID
@@ -180,6 +186,8 @@ class ModelscopeClient(BaseApiClient):
             logger.error(f"{self.log_prefix} (魔搭) 任务超时，未能在规定时间内完成")
             return False, "任务执行超时"
 
+        except NonRetryableError:
+            raise
         except Exception as e:
             logger.error(f"{self.log_prefix} (魔搭) 请求异常: {e!r}", exc_info=True)
             return False, f"请求失败: {str(e)}"

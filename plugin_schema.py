@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict
 
 from src.plugin_system.base.config_types import (
@@ -121,7 +122,7 @@ CONFIG_SCHEMA = {
             order=1,
         ),
         "config_version": ConfigField(
-            type=str, default="3.6.10", description="插件配置版本号", label="配置版本", disabled=True, order=2
+            type=str, default="3.6.11", description="插件配置版本号", label="配置版本", disabled=True, order=2
         ),
         "enabled": ConfigField(
             type=bool,
@@ -452,9 +453,9 @@ CONFIG_SCHEMA = {
         "mode": ConfigField(
             type=str,
             default="sd",
-            description="手动画图链路使用的优化模式。sd=把最终提示词整理成适合 Stable Diffusion / 标签流模型的英文 tag；natural_language=把最终提示词整理成更自然的英文短语。自动自拍链路不受这里影响",
+            description="手动画图链路使用的优化模式。nai=NAI标签流，sd=SD标签流，natural_language=自然英文短语。自动自拍链路不受这里影响",
             label="全局优化模式",
-            choices=["sd", "natural_language"],
+            choices=["nai", "sd", "natural_language"],
             depends_on="prompt_optimizer.enabled",
             depends_value=True,
             order=2,
@@ -849,7 +850,7 @@ CONFIG_SCHEMA = {
     "models.model1": {
         "name": ConfigField(
             type=str,
-            default="Tongyi-MAI/Z-Image-Turbo",
+            default="krea/Krea-2-Turbo",
             description="模型显示名称。在 /dr list 命令中显示，方便识别",
             label="模型名称",
             group="connection",
@@ -897,7 +898,7 @@ CONFIG_SCHEMA = {
         ),
         "model": ConfigField(
             type=str,
-            default="Tongyi-MAI/Z-Image-Turbo",
+            default="krea/Krea-2-Turbo",
             description="模型标识。填模型ID或模型名称，如 cancel13/liaocao。ComfyUI格式填工作流文件名",
             label="模型标识",
             required=True,
@@ -906,7 +907,7 @@ CONFIG_SCHEMA = {
         ),
         "fixed_size_enabled": ConfigField(
             type=bool,
-            default=False,
+            default=True,
             description="是否固定图片尺寸。开启后强制使用 default_size，关闭则由 LLM 自动选择合适尺寸",
         ),
         "default_size": ConfigField(
@@ -929,7 +930,7 @@ CONFIG_SCHEMA = {
         ),
         "guidance_scale": ConfigField(
             type=float,
-            default=5,
+            default=1,
             description="引导强度（CFG）。控制AI'听话程度'。值越高越严格遵循提示词。推荐：魔搭/硅基流动 2.5-7.5",
             label="引导强度",
             min=0.0,
@@ -940,7 +941,7 @@ CONFIG_SCHEMA = {
         ),
         "num_inference_steps": ConfigField(
             type=int,
-            default=28,
+            default=8,
             description="推理步数。影响质量和速度。推荐 20-50，太少质量差，太多太慢",
             label="推理步数",
             min=1,
@@ -965,7 +966,7 @@ CONFIG_SCHEMA = {
         ),
         "negative_prompt_add": ConfigField(
             type=str,
-            default="lowres, blurry, low quality, worst quality, jpeg artifacts, deformed, ugly, bad anatomy, bad hands, extra limbs, extra arms, mutated, watermark, text, signature, grainy, overexposed, underexposed",
+            default="",
             description="负面提示词。避免生成不想要的内容（低质量、模糊、水印等）。豆包/Gemini 不支持此参数",
             label="负面提示词",
             input_type="textarea",
@@ -991,10 +992,10 @@ CONFIG_SCHEMA = {
         ),
         "optimizer_mode_override": ConfigField(
             type=str,
-            default="follow_global",
-            description="该模型对手动画图优化模式的覆盖设置。follow_global=跟随全局 prompt_optimizer.mode；sd=强制使用 SD 标签模式；natural_language=强制使用自然语言模式。只影响手动画图，不影响自动自拍",
+            default="natural_language",
+            description="该模型对手动画图优化模式的覆盖设置。follow_global=跟随全局；nai=强制 NAI 标签模式；sd=强制 SD 标签模式；natural_language=强制自然语言模式。仅影响手动链路，不影响自动自拍",
             label="优化模式覆盖",
-            choices=["follow_global", "sd", "natural_language"],
+            choices=["follow_global", "nai", "sd", "natural_language"],
             group="prompts",
             order=16,
         ),
@@ -1022,11 +1023,14 @@ CONFIG_SCHEMA = {
         ),
         "sampler": ConfigField(
             type=str,
-            default="k_euler_ancestral",
-            description="采样器名称。仅砂糖云格式生效。推荐 k_euler_ancestral",
+            default="euler",
+            description="采样器名称。魔搭模型记录该字段；砂糖云格式会将其发送给接口",
             label="采样器",
-            hint="仅砂糖云格式生效",
+            hint="魔搭模型按服务端支持情况生效；砂糖云格式会发送该字段",
             choices=[
+                "euler",
+                "Euler a",
+                "EULER",
                 "k_euler_ancestral",
                 "k_euler",
                 "k_dpmpp_2s_ancestral",
@@ -1793,6 +1797,128 @@ CONFIG_SCHEMA = {
     },
 }
 
+# 六个内置模型共用相同字段结构，避免新增模型时复制并维护整段字段定义。
+CONFIG_SCHEMA["models.model6"] = copy.deepcopy(CONFIG_SCHEMA["models.model5"])
+_DEFAULT_MODEL_VALUES = {
+    "models.model1": {
+        "name": "Krea-2-Turbo",
+        "model": "krea/Krea-2-Turbo",
+        "format": "modelscope",
+        "fixed_size_enabled": True,
+        "default_size": "1024x1024",
+        "guidance_scale": 1,
+        "num_inference_steps": 8,
+        "custom_prompt_add": "",
+        "negative_prompt_add": "",
+        "optimizer_mode_override": "natural_language",
+        "sampler": "Euler",
+    },
+    "models.model2": {
+        "name": "Z-Image-Turbo",
+        "model": "Tongyi-MAI/Z-Image-Turbo",
+        "format": "modelscope",
+        "fixed_size_enabled": True,
+        "default_size": "1024x1024",
+        "guidance_scale": 1,
+        "num_inference_steps": 12,
+        "custom_prompt_add": "",
+        "negative_prompt_add": "",
+        "optimizer_mode_override": "natural_language",
+        "sampler": "Euler",
+    },
+    "models.model3": {
+        "name": "WAI-illustrious-SDXL-v17",
+        "model": "HingXuan/WAI-illustrious-SDXL-v17",
+        "format": "modelscope",
+        "fixed_size_enabled": True,
+        "default_size": "1024x1024",
+        "guidance_scale": 6,
+        "num_inference_steps": 30,
+        "custom_prompt_add": "masterpiece, best quality, newest, highres, aesthetic, ",
+        "negative_prompt_add": "worst quality, low quality, bad hands, mutated hands, blurry, lowres",
+        "optimizer_mode_override": "sd",
+        "sampler": "Euler a",
+    },
+    "models.model4": {
+        "name": "ChenkinNoob-XL-V0.5",
+        "model": "ChenkinNoob/ChenkinNoob-XL-V0.5",
+        "format": "modelscope",
+        "fixed_size_enabled": True,
+        "default_size": "1024x1024",
+        "guidance_scale": 6,
+        "num_inference_steps": 30,
+        "custom_prompt_add": "masterpiece, best quality, newest, highres, aesthetic, ",
+        "negative_prompt_add": "worst quality, low quality, bad hands, mutated hands, blurry, lowres",
+        "optimizer_mode_override": "sd",
+        "sampler": "Euler a",
+    },
+    "models.model5": {
+        "name": "MiaoMiao RealSkin EPS-v1.3",
+        "model": "mixLine/miaomiaoRealskin",
+        "format": "modelscope",
+        "fixed_size_enabled": True,
+        "default_size": "1024x1024",
+        "guidance_scale": 6,
+        "num_inference_steps": 30,
+        "custom_prompt_add": "masterpiece,very aesthetic,best quality,absurdres,newest,highres,ultra detailed ,anime coloring,depth of field,pale_skin,",
+        "negative_prompt_add": "lowres,(bad),bad hands,limb asymmetry,bad feet,text,error,fewer,extra,missing,worst quality,jpeg artifacts,low quality,watermark,unfinished,displeasing,oldest,early,chromatic aberration,signature,simple_background,artistic error,username,scan,[abstract],english text,shiny_skin",
+        "optimizer_mode_override": "sd",
+        "sampler": "Euler a",
+    },
+    "models.model6": {
+        "name": "MiaoMiao Harem v1.9",
+        "model": "qsdq2423432/miaomiaoHarem_v19",
+        "format": "modelscope",
+        "fixed_size_enabled": True,
+        "default_size": "1024x1024",
+        "guidance_scale": 6,
+        "num_inference_steps": 30,
+        "custom_prompt_add": "masterpiece, best quality, absurdres, newest, very aesthetic, amazing quality,highres,sensitive,complex background, highres, ultra detailed, best anatomy, HDR, 8K, high detail RAW color art, high contrast, depth of field",
+        "negative_prompt_add": "lowres,(bad),limb asymmetry,bad feet,text,error,fewer,extra,missing,worst quality,jpeg artifacts,low quality,watermark,unfinished,displeasing,oldest,early,chromatic aberration,signature,simple_background,artistic error,username,scan,[abstract],english text,shiny_skin",
+        "optimizer_mode_override": "sd",
+        "sampler": "Euler a",
+    },
+}
+_SAMPLER_CHOICES = [
+    "Euler",
+    "Euler a",
+    "DPM++ 2M Karras",
+    "DPM++ 2M SDE Karras",
+    "DPM++ 2S a Karras",
+    "DPM++ SDE Karras",
+    "k_euler_ancestral",
+    "k_euler",
+    "k_dpmpp_2s_ancestral",
+    "k_dpmpp_2m_sde",
+    "k_dpmpp_2m",
+    "k_dpmpp_sde",
+]
+
+for _model_section, _model_defaults in _DEFAULT_MODEL_VALUES.items():
+    _model_fields = CONFIG_SCHEMA.get(_model_section)
+    if isinstance(_model_fields, dict):
+        for _field_name, _field_default in _model_defaults.items():
+            _field = _model_fields.get(_field_name)
+            if isinstance(_field, ConfigField):
+                _field.default = _field_default
+
+        if "optimizer_mode_override" not in _model_fields:
+            _model_fields["optimizer_mode_override"] = ConfigField(
+                type=str,
+                default=_model_defaults["optimizer_mode_override"],
+                description="该模型对手动画图优化模式的覆盖设置。follow_global=跟随全局；nai=强制 NAI 标签模式；sd=强制 SD 标签模式；natural_language=强制自然语言模式。仅影响手动链路，不影响自动自拍",
+                label="优化模式覆盖",
+                choices=["follow_global", "nai", "sd", "natural_language"],
+                group="prompts",
+                order=16,
+            )
+
+        _sampler_field = _model_fields.get("sampler")
+        if isinstance(_sampler_field, ConfigField):
+            _sampler_field.choices = _SAMPLER_CHOICES.copy()
+            _sampler_field.description = "采样器名称。魔搭文生图会发送该字段；砂糖云和 Tuercha-NAI 使用各自支持的名称"
+            _sampler_field.hint = "魔搭使用 Euler 等界面名称；砂糖云和 Tuercha-NAI 使用 k_euler_* 等专用名称"
+
 # ---- 模型字段模板（用于动态注入） ----
 # 这是一个类级别的「字段工厂」，_inject_dynamic_config_layout 会用它来为新模型克隆字段
 MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
@@ -1947,11 +2073,11 @@ MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
     "optimizer_mode_override": {
         "type": str,
         "default": "follow_global",
-        "choices": ["follow_global", "sd", "natural_language"],
+        "choices": ["follow_global", "nai", "sd", "natural_language"],
         "group": "prompts",
         "order": 16,
         "label": "优化模式覆盖",
-        "description": "该模型对手动画图优化模式的覆盖设置。follow_global=跟随全局；sd=强制 SD 标签模式；natural_language=强制自然语言模式。仅影响手动链路，不影响自动自拍",
+        "description": "该模型对手动画图优化模式的覆盖设置。follow_global=跟随全局；nai=强制 NAI 标签模式；sd=强制 SD 标签模式；natural_language=强制自然语言模式。仅影响手动链路，不影响自动自拍",
     },
     "auto_recall_delay": {
         "type": int,
@@ -1998,19 +2124,12 @@ MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
     "sampler": {
         "type": str,
         "default": "k_euler_ancestral",
-        "choices": [
-            "k_euler_ancestral",
-            "k_euler",
-            "k_dpmpp_2s_ancestral",
-            "k_dpmpp_2m_sde",
-            "k_dpmpp_2m",
-            "k_dpmpp_sde",
-        ],
-        "hint": "仅砂糖云格式生效",
+        "choices": _SAMPLER_CHOICES.copy(),
+        "hint": "魔搭使用 Euler 等界面名称；砂糖云和 Tuercha-NAI 使用 k_euler_* 等专用名称",
         "group": "platform",
         "order": 21,
         "label": "采样器",
-        "description": "砂糖云专用：采样器名称",
+        "description": "采样器名称。魔搭文生图会发送该字段；砂糖云和 Tuercha-NAI 使用各自支持的名称",
     },
     "nocache": {
         "type": int,
