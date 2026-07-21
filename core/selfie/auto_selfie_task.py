@@ -427,7 +427,7 @@ class AutoSelfieTask:
 
         # 3. 生成图片
         selfie_model = self.get_config("auto_selfie.selfie_model", "model1")
-        model_config = self._get_model_config(selfie_model)
+        actual_model_id, model_config = self._get_model_config(selfie_model)
         if not model_config:
             logger.error(f"模型配置获取失败: {selfie_model}")
             raise RuntimeError(f"模型配置获取失败: {selfie_model}")
@@ -642,8 +642,12 @@ class AutoSelfieTask:
 
         logger.info("自拍流程执行完成")
 
-    def _get_model_config(self, model_id: str) -> Optional[dict[str, Any]]:
-        """获取模型配置"""
+    def _get_model_config(self, model_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """获取模型配置
+
+        Returns:
+            (实际模型ID, 配置字典) 或 (model_id, None)
+        """
         return get_model_config(self.get_config, model_id, log_prefix="[AutoSelfie]")
 
     def _load_reference_image(self) -> Optional[str]:
