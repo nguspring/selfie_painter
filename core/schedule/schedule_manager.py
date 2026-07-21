@@ -64,7 +64,13 @@ class ScheduleManager:
             await asyncio.to_thread(self._db.set_state, "schedule_last_generated_source", "template")
 
         if plugin is not None:
-            # 修复 F9：检查是否已有该日期的 LLM 覆盖任务
+            # 检查数据库中今天是否已经生成过日程（持久化检查，避免重启后重复生成）
+            last_generated_date = await asyncio.to_thread(self._db.get_state, "schedule_last_generated_date")
+            if last_generated_date == today:
+                logger.debug(f"[ScheduleManager] 今日日程已生成过（{last_generated_date}），跳过 LLM 覆盖")
+                return
+
+            # 修复 F9：检查是否已有该日期的 LLM 覆盖任务（进程内去重）
             if today in self._llm_override_tasks:
                 existing_task = self._llm_override_tasks[today]
                 if not existing_task.done():
