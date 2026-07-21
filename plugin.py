@@ -379,7 +379,11 @@ class SelfiePainterV2Plugin(PluginRuntimeMixin, BasePlugin):
         )
 
     def __init__(self, plugin_dir: str):
-        """初始化插件"""
+        """初始化插件
+
+        注意：后台任务不在构造函数中启动，而是在 ON_START 事件中启动。
+        这样可以避免禁用插件仍启动后台任务的问题（H5）。
+        """
         original_config = load_raw_config(plugin_dir, self.config_file_name, logger)
         # ── 动态注入：根据 config.toml 里的实际模型/风格，更新 WEBUI 布局 ──
         self._inject_dynamic_config_layout(original_config)
@@ -387,7 +391,7 @@ class SelfiePainterV2Plugin(PluginRuntimeMixin, BasePlugin):
         # 先调用父类初始化，这会加载配置并可能触发 MaiBot 迁移
         BasePlugin.__init__(self, plugin_dir)
         self._initialize_runtime_state()
-        self._bootstrap_runtime_tasks()
+        # 不在这里调用 _bootstrap_runtime_tasks()，改为在 ON_START 事件中调用
 
     def get_plugin_components(self) -> List[Tuple[ComponentInfo, Type]]:
         """返回插件包含的组件列表"""

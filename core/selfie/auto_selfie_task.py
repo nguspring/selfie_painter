@@ -79,6 +79,9 @@ class AutoSelfieTask:
         self._last_selfie_ts: Optional[float] = None  # 上次成功自拍的 Unix 时间戳
         self._last_restart_ts: float = 0.0  # 上次自动重启的时间戳
 
+        # 修复 F12：为共享状态添加锁保护
+        self._state_lock = asyncio.Lock()
+
     # ------------------------------------------------------------------ #
     #  配置读取
     # ------------------------------------------------------------------ #
@@ -100,10 +103,12 @@ class AutoSelfieTask:
         logger.info("自动自拍任务已启动")
 
     async def stop(self) -> None:
-        """停止自动自拍任务"""
-        if not self.is_running:
-            return
-        self.is_running = False
+        """停止自动自拍任务（修复 F12：使用锁保护状态修改）"""
+        async with self._state_lock:
+            if not self.is_running:
+                return
+            self.is_running = False
+
         if self.task:
             self.task.cancel()
             try:
@@ -113,32 +118,47 @@ class AutoSelfieTask:
         logger.info("自动自拍任务已停止")
 
     def _on_task_done(self, task: asyncio.Task[None]) -> None:
-        """任务结束回调：is_running 仍为 True 说明是意外退出，自动重启（带节流）"""
-        if not self.is_running:
-            return
+        """任务结束回调：is_running 仍为 True 说明是意外退出，自动重启（带节流）
 
-        # 节流：防止崩溃热循环
-        now = time.time()
-        elapsed = now - self._last_restart_ts
-        if elapsed < self._RESTART_THROTTLE:
-            logger.error(f"自拍循环在 {elapsed:.0f}s 内再次退出，跳过重启以防热循环")
-            self.is_running = False
-            return
-
+        修复 F12：使用锁保护状态检查与修改。
+        """
+        # 使用 asyncio.run_coroutine_threadsafe 或在同步回调中创建任务
+        # 由于这是同步回调，我们需要谨慎处理异步操作
         try:
-            exc = task.exception()
-            if exc:
-                logger.error(f"自拍循环意外退出（{exc}），自动重启...")
-            else:
-                logger.warning("自拍循环正常退出但 is_running 仍为 True，自动重启...")
-        except asyncio.CancelledError:
-            logger.warning("自拍循环被意外取消，自动重启...")
-        try:
-            self._last_restart_ts = now
-            self.task = asyncio.create_task(self._selfie_loop())
-            self.task.add_done_callback(self._on_task_done)
+            loop = asyncio.get_event_loop()
+            loop.create_task(self._handle_task_done(task))
         except RuntimeError:
-            logger.error("无法重启自拍循环（事件循环可能已关闭）")
+            logger.error("无法处理任务结束回调（事件循环不可用）")
+
+    async def _handle_task_done(self, task: asyncio.Task[None]) -> None:
+        """异步处理任务结束（修复 F12：使用锁保护）"""
+        async with self._state_lock:
+            if not self.is_running:
+                return
+
+            # 节流：防止崩溃热循环
+            now = time.time()
+            elapsed = now - self._last_restart_ts
+            if elapsed < self._RESTART_THROTTLE:
+                logger.error(f"自拍循环在 {elapsed:.0f}s 内再次退出，跳过重启以防热循环")
+                self.is_running = False
+                return
+
+            try:
+                exc = task.exception()
+                if exc:
+                    logger.error(f"自拍循环意外退出（{exc}），自动重启...")
+                else:
+                    logger.warning("自拍循环正常退出但 is_running 仍为 True，自动重启...")
+            except asyncio.CancelledError:
+                logger.warning("自拍循环被意外取消，自动重启...")
+
+            try:
+                self._last_restart_ts = now
+                self.task = asyncio.create_task(self._selfie_loop())
+                self.task.add_done_callback(self._on_task_done)
+            except RuntimeError:
+                logger.error("无法重启自拍循环（事件循环可能已关闭）")
 
     # ------------------------------------------------------------------ #
     #  时间判断（仅 2 个方法）
@@ -213,10 +233,7 @@ class AutoSelfieTask:
     # ------------------------------------------------------------------ #
 
     async def _selfie_loop(self) -> None:
-        """主循环：每 _POLL_INTERVAL 秒检查一次条件，满足则拍照"""
-        interval = self.get_config("auto_selfie.interval_minutes", 120)
-        interval_seconds = max(interval, 10) * 60  # 至少 10 分钟
-
+        """主循环：每 _POLL_INTERVAL 秒检查一次条件，满足则拍照（修复 F15：支持配置热重载）"""
         # 启动延迟
         await asyncio.sleep(10.0)
 
@@ -241,6 +258,10 @@ class AutoSelfieTask:
             try:
                 poll_count += 1
 
+                # 修复 F15：每次迭代重新读取配置，支持配置热重载
+                interval_minutes = self.get_config("auto_selfie.interval_minutes", 120)
+                interval_seconds = max(interval_minutes, 10) * 60  # 至少 10 分钟
+
                 # ---- 心跳日志 ----
                 if poll_count % self._HEARTBEAT_EVERY == 0:
                     self._log_heartbeat(interval_seconds)
@@ -261,21 +282,23 @@ class AutoSelfieTask:
                     db_load_pending = False
                     logger.info("数据库恢复，已加载上次自拍时间")
 
-                # ---- 判断是否该拍照 ----
-                now_ts = time.time()
-                should_take = False
-                reason = ""
+                # ---- 判断是否该拍照（修复 F12：使用锁保护共享状态读取）----
+                async with self._state_lock:
+                    now_ts = time.time()
+                    should_take = False
+                    reason = ""
+                    last_ts = self._last_selfie_ts
 
-                if self._last_selfie_ts is None:
-                    should_take = True
-                    reason = "首次自拍（无历史记录）"
-                elif not self._is_today_after_wake(self._last_selfie_ts):
-                    should_take = True
-                    reason = "醒来第一张自拍"
-                elif now_ts - self._last_selfie_ts >= interval_seconds:
-                    should_take = True
-                    elapsed_min = (now_ts - self._last_selfie_ts) / 60
-                    reason = f"间隔到达（已过 {elapsed_min:.0f} 分钟）"
+                    if last_ts is None:
+                        should_take = True
+                        reason = "首次自拍（无历史记录）"
+                    elif not self._is_today_after_wake(last_ts):
+                        should_take = True
+                        reason = "醒来第一张自拍"
+                    elif now_ts - last_ts >= interval_seconds:
+                        should_take = True
+                        elapsed_min = (now_ts - last_ts) / 60
+                        reason = f"间隔到达（已过 {elapsed_min:.0f} 分钟）"
 
                 if not should_take:
                     await asyncio.sleep(self._POLL_INTERVAL)
@@ -285,8 +308,10 @@ class AutoSelfieTask:
                 logger.info(f"触发自拍: {reason}")
                 try:
                     await self._execute_selfie()
-                    self._last_selfie_ts = time.time()
-                    await self._save_last_selfie_ts(self._last_selfie_ts)
+                    # 修复 F12：使用锁保护共享状态修改
+                    async with self._state_lock:
+                        self._last_selfie_ts = time.time()
+                        await self._save_last_selfie_ts(self._last_selfie_ts)
                     self._consecutive_failures = 0
                     logger.info("自拍完成，计时器重置")
                 except asyncio.CancelledError:
@@ -389,7 +414,7 @@ class AutoSelfieTask:
         prompt = await convert_to_selfie_prompt(activity, selfie_style, bot_appearance, raw_mode=raw_mode)
         if not prompt:
             logger.warning("LLM 自拍提示词生成失败，跳过本次自拍")
-            return
+            raise RuntimeError("自拍提示词生成失败")
 
         negative_prompt = get_negative_prompt_for_style(
             selfie_style,
@@ -405,7 +430,7 @@ class AutoSelfieTask:
         model_config = self._get_model_config(selfie_model)
         if not model_config:
             logger.error(f"模型配置获取失败: {selfie_model}")
-            return
+            raise RuntimeError(f"模型配置获取失败: {selfie_model}")
 
         # 透传代理配置
         extra_config = {}
@@ -440,7 +465,7 @@ class AutoSelfieTask:
 
         if not success:
             logger.error(f"自拍图片生成失败: {image_data}")
-            return
+            raise RuntimeError(f"自拍图片生成失败: {image_data}")
 
         logger.info(f"自拍图片生成成功，数据长度: {len(image_data)}")
 
@@ -450,7 +475,7 @@ class AutoSelfieTask:
             caption = await generate_caption(activity)
             if not caption:
                 logger.warning("配文生成失败，跳过本次自拍发布")
-                return
+                raise RuntimeError("配文生成失败")
             logger.info(f"配文: {caption}")
 
         # 5. 发布到目标频道
@@ -459,6 +484,11 @@ class AutoSelfieTask:
         target_groups = self.get_config("auto_selfie.target_groups", [])
         target_users = self.get_config("auto_selfie.target_users", [])
         caption_enabled = self.get_config("auto_selfie.caption_enabled", True)
+
+        # 追踪至少一个发送成功，以及各渠道的发送结果
+        any_send_success = False
+        qzone_failed = False
+        chat_failed = False
 
         # 5a. 发布到 QQ 空间
         if send_to_qzone:
@@ -486,25 +516,34 @@ class AutoSelfieTask:
                 image_bytes = await self._resolve_image_to_bytes(image_data)
                 if not image_bytes:
                     logger.error("图片数据转换失败，无法发布到QQ空间")
+                    qzone_failed = True
                 else:
                     # 发布说说
                     qzone = create_qzone_api()
                     if not qzone:
                         logger.error("QZone API 创建失败（Cookie 不存在或无效），无法发布自拍")
+                        qzone_failed = True
                     else:
                         tid = await qzone.publish_emotion(caption, [image_bytes])
                         logger.info(f"自拍已发布到QQ空间，tid: {tid}")
+                        any_send_success = True
             except ImportError:
                 logger.error("Maizone 插件未安装，无法发布自拍到QQ空间")
+                qzone_failed = True
             except Exception as e:
-                logger.warning(f"[SelfiePainterV2] QQ空间发送失败: {e}")
+                logger.error(f"[SelfiePainterV2] QQ空间发送失败: {e}")
+                qzone_failed = True
 
         # 5b. 发布到群聊/私聊
         if send_to_chat:
+            chat_send_count = 0  # 记录尝试发送的目标数量
+            chat_success_count = 0  # 记录成功发送的数量
+
             try:
                 # 主动从数据库加载所有历史聊天流，确保即使长时间无互动也能找到目标
                 try:
-                    chat_stream_module = import_module("src.chat.chat_stream")
+                    # 修复 F5：使用正确的模块路径
+                    chat_stream_module = import_module("src.chat.message_receive.chat_stream")
                     get_chat_manager = chat_stream_module.get_chat_manager
 
                     chat_manager = get_chat_manager()
@@ -520,20 +559,28 @@ class AutoSelfieTask:
                 send_api = plugin_apis_module.send_api
                 import base64
 
-                # 图片转 base64
+                # 图片转 base64（统一处理 bytes、URL 和 base64 字符串）
                 if isinstance(image_data, bytes):
                     image_b64 = base64.b64encode(image_data).decode("utf-8")
                 else:
-                    image_b64 = image_data  # 已经是 base64 字符串
+                    # image_data 可能是 URL 或 base64 字符串，统一转换为 bytes 再编码
+                    image_bytes = await self._resolve_image_to_bytes(image_data)
+                    if not image_bytes:
+                        logger.error("图片数据转换失败，无法发送到群聊/私聊")
+                        chat_failed = True
+                        raise RuntimeError("图片数据转换失败")
+                    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
                 # 发送到目标群聊
                 for group_id in target_groups:
+                    chat_send_count += 1
                     try:
                         group_stream_id = build_target_context_id(group_id, "group")
                         if group_stream_id and not is_chat_allowed_for_model(
                             self.get_config, group_stream_id, selfie_model
                         ):
                             logger.info(f"[SelfiePainterV2] 群 {group_id} 被模型 {selfie_model} 的访问规则跳过")
+                            chat_send_count -= 1  # 跳过的不计入尝试数
                             continue
                         stream = chat_api.get_stream_by_group_id(str(group_id))
                         if stream:
@@ -541,19 +588,23 @@ class AutoSelfieTask:
                             if caption_enabled and caption:
                                 await send_api.text_to_stream(caption, stream.stream_id)
                             logger.info(f"自拍已发送到群 {group_id}")
+                            chat_success_count += 1
+                            any_send_success = True
                         else:
-                            logger.info(f"[SelfiePainterV2] 群 {group_id} 无活跃stream，跳过")
+                            logger.warning(f"[SelfiePainterV2] 群 {group_id} 无活跃stream，跳过")
                     except Exception as e:
-                        logger.warning(f"[SelfiePainterV2] 发送到群 {group_id} 失败: {e}")
+                        logger.error(f"[SelfiePainterV2] 发送到群 {group_id} 失败: {e}")
 
                 # 发送到目标私聊
                 for user_id in target_users:
+                    chat_send_count += 1
                     try:
                         user_stream_id = build_target_context_id(user_id, "private")
                         if user_stream_id and not is_chat_allowed_for_model(
                             self.get_config, user_stream_id, selfie_model
                         ):
                             logger.info(f"[SelfiePainterV2] 用户 {user_id} 被模型 {selfie_model} 的访问规则跳过")
+                            chat_send_count -= 1  # 跳过的不计入尝试数
                             continue
                         stream = chat_api.get_stream_by_user_id(str(user_id))
                         if stream:
@@ -561,24 +612,35 @@ class AutoSelfieTask:
                             if caption_enabled and caption:
                                 await send_api.text_to_stream(caption, stream.stream_id)
                             logger.info(f"自拍已发送到用户 {user_id}")
+                            chat_success_count += 1
+                            any_send_success = True
                         else:
-                            logger.info(f"[SelfiePainterV2] 用户 {user_id} 无活跃stream，跳过")
+                            logger.warning(f"[SelfiePainterV2] 用户 {user_id} 无活跃stream，跳过")
                     except Exception as e:
-                        logger.warning(f"[SelfiePainterV2] 发送到用户 {user_id} 失败: {e}")
+                        logger.error(f"[SelfiePainterV2] 发送到用户 {user_id} 失败: {e}")
+
+                # 检查群聊/私聊是否全部失败
+                if chat_send_count > 0 and chat_success_count == 0:
+                    chat_failed = True
+                    logger.error(f"[SelfiePainterV2] 群聊/私聊发送全部失败: 尝试 {chat_send_count} 个目标，成功 0 个")
 
             except Exception as e:
-                logger.warning(f"[SelfiePainterV2] 群聊/私聊发送失败: {e}")
+                logger.error(f"[SelfiePainterV2] 群聊/私聊发送流程异常: {e}")
+                chat_failed = True
 
-        # 6. 持久化成功时间戳
-        if self.get_config("auto_selfie.persist_state", True):
-            try:
-                from ..schedule.schedule_manager import get_schedule_manager
+        # 检查是否至少有一个发送成功
+        if not any_send_success:
+            error_msg = "自拍生成成功，但所有发送渠道均失败"
+            if qzone_failed and chat_failed:
+                error_msg += "（QQ空间和群聊/私聊均失败）"
+            elif qzone_failed:
+                error_msg += "（QQ空间失败）"
+            elif chat_failed:
+                error_msg += "（群聊/私聊失败）"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
-                manager = get_schedule_manager()
-                await manager.set_state("auto_selfie_last_success_ts", str(time.time()))
-                logger.debug("已更新 auto_selfie_last_success_ts")
-            except Exception as e:
-                logger.warning(f"持久化自拍时间戳失败: {e}")
+        logger.info("自拍流程执行完成")
 
     def _get_model_config(self, model_id: str) -> Optional[dict[str, Any]]:
         """获取模型配置"""
@@ -615,7 +677,13 @@ class AutoSelfieTask:
 
     @staticmethod
     async def _resolve_image_to_bytes(image_data: str) -> Optional[bytes]:
-        """将 base64 或 URL 格式的图片数据转为 bytes"""
+        """将 base64 或 URL 格式的图片数据转为 bytes
+
+        支持以下格式：
+        - HTTP(S) URL: 下载图片内容
+        - Data URI: 移除前缀后解码 base64
+        - 纯 base64: 直接解码
+        """
         if image_data.startswith(("http://", "https://")):
             import httpx
 
@@ -624,4 +692,13 @@ class AutoSelfieTask:
                 resp.raise_for_status()
                 return resp.content
         else:
+            # 移除 Data URI 前缀（如果存在）
+            if image_data.startswith("data:"):
+                # 格式: data:image/png;base64,iVBOR...
+                if "base64," in image_data:
+                    image_data = image_data.split("base64,", 1)[1]
+                else:
+                    # 格式异常：有 data: 前缀但没有 base64 标记
+                    raise ValueError("Data URI 格式错误：缺少 base64 标记")
+
             return base64.b64decode(image_data)

@@ -34,7 +34,12 @@ from .optimizer_mode import (
 from .prompt_optimizer import PromptOptimizer, optimize_prompt
 from .runtime_state import runtime_state
 from .role_reference_store import RoleReferenceStore
-from .access_control import build_target_context_id, describe_access_rule, is_chat_allowed_for_model
+from .access_control import (
+    build_target_context_id,
+    describe_access_rule,
+    is_chat_allowed_for_model,
+    extract_context_id_from_chat_stream,
+)
 
 __all__ = [
     "ANTI_DUAL_HANDS_PROMPT",
@@ -67,6 +72,7 @@ __all__ = [
     "build_target_context_id",
     "describe_access_rule",
     "is_chat_allowed_for_model",
+    "extract_context_id_from_chat_stream",
     "normalize_prompt_optimizer_mode",
     "normalize_prompt_optimizer_override",
     "resolve_effective_prompt_optimizer_mode",

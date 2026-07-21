@@ -15,7 +15,6 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -186,22 +185,25 @@ class ConversationContextCache:
         return len(self._turns)
 
 
-# 模块级单例实例（全局共享）
-_cache_instance: Optional[ConversationContextCache] = None
+# 修复 F19：改为按 stream_id 隔离的字典，而非全局单例
+_cache_instances: dict[str, ConversationContextCache] = {}
 
 
-def get_context_cache(max_turns: int = 10, ttl_minutes: int = 30) -> ConversationContextCache:
+def get_context_cache(stream_id: str = "", max_turns: int = 10, ttl_minutes: int = 30) -> ConversationContextCache:
     """
-    获取对话上下文缓存单例实例
+    获取对话上下文缓存实例（修复 F19：按 stream_id 隔离）
 
     Args:
+        stream_id: 聊天流 ID（为空时回退到全局单例行为，兼容旧代码）
         max_turns: 最大轮数
         ttl_minutes: 过期时间（分钟）
 
     Returns:
-        ConversationContextCache: 缓存实例
+        ConversationContextCache: 该聊天流的缓存实例
     """
-    global _cache_instance
-    if _cache_instance is None:
-        _cache_instance = ConversationContextCache(max_turns=max_turns, ttl_minutes=ttl_minutes)
-    return _cache_instance
+    # 兼容旧代码：stream_id 为空时使用特殊键
+    cache_key = stream_id if stream_id else "__global__"
+
+    if cache_key not in _cache_instances:
+        _cache_instances[cache_key] = ConversationContextCache(max_turns=max_turns, ttl_minutes=ttl_minutes)
+    return _cache_instances[cache_key]

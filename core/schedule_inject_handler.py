@@ -153,10 +153,13 @@ class ScheduleInjectHandler(BaseEventHandler):
         if not inject_text:
             return (True, True, None, None, message)
 
-        # ========== 注入到 llm_prompt ==========
+        # ========== 注入到 llm_prompt ==========（修复 F3：调用 modify_llm_prompt）
 
         current_prompt = getattr(message, "llm_prompt", "") or ""
         message.llm_prompt = inject_text + "\n\n" + current_prompt
+
+        # 必须调用 modify_llm_prompt() 以设置宿主修改标记
+        message.modify_llm_prompt(message.llm_prompt)
 
         # 更新节流状态
         _stream_throttle[stream_id] = time.time()

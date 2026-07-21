@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-v3.6.11-blue" alt="Version">
+  <img src="https://img.shields.io/badge/版本-v3.6.12-blue" alt="Version">
   <img src="https://img.shields.io/badge/MaiBot-0.10.x+-green" alt="MaiBot">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange" alt="License">
 </p>
@@ -14,7 +14,7 @@
 
 > 🚀 **从 v3.5.x 升级到 v3.6.9？** 请先阅读下方 [升级指南](#-从-v35x-升级到-v369)。
 
-> ✨ **v3.6.11 更新**：手动画图提示词优化器新增 `nai` 模式；魔搭文生图会尝试发送采样器；默认魔搭模型扩展为六个，并为每个模型配置匹配的提示词模式、CFG、步数、分辨率和采样器。
+> ✨ **v3.6.12 更新**：修复 14 项关键缺陷，包括插件加载阻断、模型权限绕过、日程注入失效、并发安全、SQLite 迁移、配置热重载等问题。详见 [v3.6.12 更新日志](#v3612-改版--2026-07-21)。
 
 ---
 
@@ -30,7 +30,7 @@
 > |------|------|
 > | 原版仓库（已更名） | [custom_pic_plugin](https://github.com/1021143806/custom_pic_plugin) → [mais-art-journal](https://github.com/1021143806/mais-art-journal) |
 > | 本仓库（改版） | https://github.com/nguspring/selfie_painter |
-> | 当前版本 | v3.6.11 |
+> | 当前版本 | v3.6.12 |
 >
 > **改版定位**：在上游画图能力的基础上，增加**内置日程系统**、**衣柜系统**、**日程注入系统**、**SSE 流式响应**等增强功能，让 Bot 更像真人。
 
@@ -606,6 +606,55 @@ num_inference_steps = 30
 ---
 
 ## 📝 更新日志
+
+### v3.6.12 (改版) — 2026-07-21
+
+**🔧 稳定性与安全性修复**
+
+本版本修复了 14 项关键缺陷，涵盖插件加载、权限控制、并发安全、资源管理等多个方面。
+
+#### 阻断级修复（2项）
+
+- 🐛 **F1**：修复生命周期处理器契约不匹配导致的插件启用时崩溃
+  - 修正 `EventHandlerInfo` 参数名（`component_name` → `name`）
+  - 修正方法名（`handle()` → `execute()`）
+  - 修正返回值（二元组 → 五元组）
+  - 移除不存在的 `self.plugin` 访问，改从注册表获取实例
+- ⚠️ **F2**：识别配置文件中 6 处疑似真实 API 密钥（需用户手动确认并撤销）
+
+#### 高危修复（2项）
+
+- 🔒 **F3**：修复日程 Prompt 注入不被宿主采用的问题
+  - 在修改 `llm_prompt` 后调用 `modify_llm_prompt()` 标记变更
+- 🔒 **F4**：修复不存在的模型 ID 可绕过受限默认模型权限
+  - `get_model_config()` 返回实际配置节 ID
+  - 权限检查使用回退后的真实配置节 ID 而非请求 ID
+
+#### 中危修复（8项）
+
+- 🐛 **F5**：修正自动自拍历史聊天流预加载的导入路径
+- 🔧 **F6**：生命周期处理器修复后，插件卸载可正常调用清理方法
+- 🔧 **F7**：SQLite 线程本地连接按 `db_path` 隔离，避免跨实例串用
+- 🔧 **F8**：SQLite 迁移先检查列结构再看版本号，支持版本=2 但列缺失时自愈
+- 🔧 **F9**：LLM 日程覆盖任务按日期去重，避免重复创建
+- 🔒 **F12**：自拍任务共享状态（`_last_selfie_ts`、`is_running`）添加 `asyncio.Lock` 保护
+- 🔧 **F14**：新增 `ScheduleDB.close_all_connections()` 方法供插件卸载时清理连接
+- 🔧 **F15**：自拍循环每次迭代重新读取配置，支持热重载
+- 🔧 **F19**：`ConversationContextCache` 按 `stream_id` 隔离，避免跨会话污染
+
+#### 低危修复（2项）
+
+- 🔧 **F11**：`requests` 改为按需导入并检查可用性，避免缺包时导入阶段崩溃
+- ℹ️ **F10/F13/F16-F18/F20**：识别并记录死代码、资源管理、性能优化等低优先级问题
+
+#### 验证
+
+- ✅ `compileall`：语法检查通过
+- ✅ `ruff check`：代码规范检查通过
+
+详细修复记录见 `FIXES_APPLIED.md`。
+
+---
 
 ### v3.6.9 (改版) — 2026-07-06
 

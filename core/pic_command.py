@@ -24,6 +24,7 @@ from .utils import (
     get_selfie_style_display_name,
     is_chat_allowed_for_model,
     describe_access_rule,
+    extract_context_id_from_chat_stream,
 )
 
 logger = get_logger("mais_art.command")
@@ -33,10 +34,18 @@ class PicCommandMixin(BaseCommand):
     """公共方法混入，供 PicGenerationCommand / PicConfigCommand / PicStyleCommand 共用"""
 
     def _get_chat_id(self) -> Optional[str]:
-        """获取当前聊天流ID"""
+        """获取当前聊天流的规范化上下文 ID，用于访问控制检查"""
         try:
             chat_stream = self.message.chat_stream if self.message else None
-            return chat_stream.stream_id if chat_stream else None
+            if not chat_stream:
+                return None
+            # 从 ChatStream 提取规范化的上下文 ID（格式：platform:id:scope）
+            context_id = extract_context_id_from_chat_stream(chat_stream)
+            if not context_id:
+                # 提取失败时返回 None，由调用者决定如何处理
+                logger.error(f"{self.log_prefix} 无法从聊天流提取规范化上下文 ID")
+                return None
+            return context_id
         except (AttributeError, TypeError) as exc:
             logger.debug(f"{self.log_prefix} 获取聊天流ID失败，返回空: {exc}")
             return None
@@ -360,15 +369,16 @@ class PicGenerationCommand(PicCommandMixin):
             await self.send_text(f"模型 {model_id} 当前不可用")
             return False, f"模型 {model_id} 已禁用", True
 
-        if chat_id and not is_chat_allowed_for_model(self.get_config, chat_id, model_id):
-            await self.send_text(f"模型 {model_id} 当前聊天流不可用")
-            return False, f"模型 {model_id} 被访问规则拒绝", True
-
-        # 获取模型配置
-        model_config = self._get_model_config(model_id)
+        # 获取模型配置（修复 F4：使用实际配置节 ID 进行权限检查）
+        actual_model_id, model_config = self._get_model_config(model_id)
         if not model_config:
             await self.send_text(f"模型 '{model_id}' 不存在")
             return False, "模型配置不存在", True
+
+        # 修复 F4：使用实际配置节 ID 进行权限检查
+        if chat_id and not is_chat_allowed_for_model(self.get_config, chat_id, actual_model_id):
+            await self.send_text(f"模型 {model_id} 当前聊天流不可用")
+            return False, f"模型 {actual_model_id} 被访问规则拒绝", True
 
         # 检查是否启用调试信息
         enable_debug = self.get_config("components.enable_debug_info", False)
@@ -499,8 +509,12 @@ class PicGenerationCommand(PicCommandMixin):
 
         return description.strip()
 
-    def _get_model_config(self, model_id: str) -> Optional[Dict[str, Any]]:
-        """获取模型配置"""
+    def _get_model_config(self, model_id: str) -> tuple[str, Optional[Dict[str, Any]]]:
+        """获取模型配置（修复 F4：返回实际配置节 ID）
+
+        Returns:
+            (实际配置节ID, 配置字典) 或 (model_id, None)
+        """
         return get_model_config(self.get_config, model_id, log_prefix=self.log_prefix)
 
     def _get_style_prompt(self, style_name: str) -> Optional[str]:

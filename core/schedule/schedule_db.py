@@ -17,11 +17,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DB_SCHEMA_VERSION = 1
+_DB_SCHEMA_VERSION = 2
 
 
 class ScheduleDB:
-    """线程安全的 SQLite 封装。只能在同步线程（asyncio.to_thread）内调用。"""
+    """线程安全的 SQLite 封装。只能在同步线程（asyncio.to_thread）内调用。
+
+    修复 F7：线程本地连接按 db_path 隔离。
+    修复 F14：提供连接清理方法。
+    """
 
     _thread_local: threading.local = threading.local()
 
@@ -58,8 +62,12 @@ class ScheduleDB:
         self.db_path: str = db_path or self.resolve_db_path()
 
     def _get_conn(self) -> sqlite3.Connection:
-        """获取当前线程的连接。"""
-        if not hasattr(self._thread_local, "conn") or self._thread_local.conn is None:
+        """获取当前线程针对此数据库路径的连接（修复 F7：按 db_path 隔离）。"""
+        if not hasattr(self._thread_local, "conns"):
+            self._thread_local.conns = {}
+
+        conns: dict = self._thread_local.conns
+        if self.db_path not in conns or conns[self.db_path] is None:
             conn = sqlite3.connect(
                 self.db_path,
                 check_same_thread=False,
@@ -69,8 +77,25 @@ class ScheduleDB:
             _ = conn.execute("PRAGMA journal_mode=WAL")
             _ = conn.execute("PRAGMA foreign_keys=ON")
             _ = conn.execute("PRAGMA synchronous=NORMAL")
-            self._thread_local.conn = conn
-        return self._thread_local.conn
+            conns[self.db_path] = conn
+        return conns[self.db_path]
+
+    @classmethod
+    def close_all_connections(cls) -> None:
+        """关闭当前线程的所有数据库连接（修复 F14：资源清理）。
+
+        应在插件卸载时从主线程调用，或在 to_thread 工作线程结束前调用。
+        """
+        if hasattr(cls._thread_local, "conns"):
+            conns: dict = cls._thread_local.conns
+            for db_path, conn in list(conns.items()):
+                if conn is not None:
+                    try:
+                        conn.close()
+                        logger.debug(f"[ScheduleDB] 已关闭数据库连接: {db_path}")
+                    except Exception as e:
+                        logger.warning(f"[ScheduleDB] 关闭连接失败 {db_path}: {e}")
+            conns.clear()
 
     @contextmanager
     def _transaction(self):
@@ -85,7 +110,7 @@ class ScheduleDB:
             raise
 
     def ensure_schema(self) -> None:
-        """幂等建表。"""
+        """幂等建表和迁移。"""
         with self._transaction() as conn:
             _ = conn.execute(
                 """
@@ -117,7 +142,56 @@ class ScheduleDB:
                 )
                 """
             )
+
+            # 迁移逻辑：检查并添加 outfit 字段
+            self._migrate_to_v2(conn)
+
         logger.debug("[ScheduleDB] schema 初始化完成: %s (v%s)", self.db_path, _DB_SCHEMA_VERSION)
+
+    def _migrate_to_v2(self, conn: sqlite3.Connection) -> None:
+        """迁移到 v2：为 schedule_items 表添加 outfit 字段。
+
+        修复 F8：版本检查放在列检查之后，防止版本漂移。
+
+        Args:
+            conn: 当前事务的数据库连接（在 _transaction 上下文内）
+        """
+        # 直接在当前连接中查询版本号（不使用 get_state，避免事务隔离问题）
+        row = conn.execute("SELECT value FROM state WHERE key=?", ("db_schema_version",)).fetchone()
+        current_version = str(row["value"]) if row else None
+
+        # 检查 outfit 字段是否已存在（修复 F8：先检查列，再看版本）
+        cursor = conn.execute("PRAGMA table_info(schedule_items)")
+        columns = [row[1] for row in cursor.fetchall()]
+        outfit_exists = "outfit" in columns
+
+        # 如果版本≥2 且列已存在，跳过迁移
+        if current_version:
+            try:
+                if int(current_version) >= 2 and outfit_exists:
+                    return
+            except ValueError:
+                # 版本号不是有效的数字字符串，记录警告并继续迁移检查
+                logger.warning("[ScheduleDB] 数据库版本号格式错误: %s，将尝试迁移", current_version)
+
+        if not outfit_exists:
+            logger.info("[ScheduleDB] 迁移到 v2：添加 outfit 字段")
+            try:
+                conn.execute("ALTER TABLE schedule_items ADD COLUMN outfit TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError as e:
+                # 如果字段已存在（其他实例并发添加），忽略错误
+                # 使用错误码检查而非文本匹配，提高兼容性
+                if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
+                    logger.info("[ScheduleDB] outfit 字段已存在（其他实例已添加），跳过迁移")
+                else:
+                    raise  # 其他错误仍然抛出
+
+        # 更新数据库版本
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR REPLACE INTO state (key, value, updated_at) VALUES (?,?,?)",
+            ("db_schema_version", "2", now),
+        )
 
     def get_state(self, key: str) -> str | None:
         """读取状态值。"""
@@ -143,8 +217,8 @@ class ScheduleDB:
                 _ = conn.execute(
                     """
                     INSERT INTO schedule_items
-                    (schedule_date, start_min, end_min, activity_type, description, mood, source, created_at)
-                    VALUES (?,?,?,?,?,?,?,?)
+                    (schedule_date, start_min, end_min, activity_type, description, mood, outfit, source, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         schedule_date,
@@ -153,6 +227,7 @@ class ScheduleDB:
                         str(item.get("activity_type", "other")),
                         str(item.get("description", "")),
                         str(item.get("mood", "neutral")),
+                        str(item.get("outfit", "")),
                         str(item.get("source", "template")),
                         now,
                     ),

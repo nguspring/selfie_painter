@@ -5,12 +5,18 @@ import urllib.parse
 import urllib.request
 from typing import Optional, Tuple, List, Dict
 
-import requests
+# 修复 F11：按需导入 requests，避免顶层导入导致可选依赖变必需
+try:
+    import requests
+    _REQUESTS_AVAILABLE = True
+except ImportError:
+    _REQUESTS_AVAILABLE = False
 
 from src.common.logger import get_logger
 from maim_message import Seg
 
 logger = get_logger("mais_art.image")
+
 
 class ImageProcessor:
     """图片处理工具类"""
@@ -137,7 +143,12 @@ class ImageProcessor:
         return headers
 
     def _download_http_image_with_requests(self, image_url: str, proxy_url: str = "") -> Tuple[bool, str]:
-        """使用 requests 下载图片，带浏览器请求头和 403 重试。"""
+        """使用 requests 下载图片，带浏览器请求头和 403 重试。修复 F11：检查 requests 可用性。"""
+        # 修复 F11：使用 requests 前检查可用性
+        if not _REQUESTS_AVAILABLE:
+            logger.error(f"{self.log_prefix} (B64) requests 库不可用，无法下载图片")
+            return False, "requests 库不可用"
+
         proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
         referer_candidates = ["", "https://kuaipao.ai/", "https://www.kuaipao.ai/"]
         last_error = ""

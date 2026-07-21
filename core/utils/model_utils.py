@@ -14,9 +14,9 @@ def get_model_config(
     model_id: str,
     default_model_id: str = "model1",
     log_prefix: str = "",
-) -> Optional[Dict[str, Any]]:
+) -> tuple[str, Optional[Dict[str, Any]]]:
     """
-    统一的模型配置获取。
+    统一的模型配置获取。修复 F4：返回实际使用的配置节 ID 和配置字典。
 
     兼容 BaseAction/BaseCommand 的 self.get_config 和
     AutoSelfieTask 的 self.plugin.get_config。
@@ -28,12 +28,15 @@ def get_model_config(
         log_prefix: 日志前缀
 
     Returns:
-        模型配置字典，或 None
+        (实际配置节ID, 模型配置字典) 或 (model_id, None)
+        - 请求的模型存在时：返回 (model_id, config)
+        - 不存在且回退成功：返回 (default_model_id, config)
+        - 完全失败：返回 (model_id, None)
     """
     # 主路径：直接读嵌套 dict
     model_config = config_getter(f"models.{model_id}", None)
     if isinstance(model_config, dict) and model_config.get("base_url"):
-        return model_config
+        return (model_id, model_config)
 
     # 回退：逐字段组装
     fields = [
@@ -57,17 +60,18 @@ def get_model_config(
 
     if assembled.get("base_url"):
         logger.debug(f"{log_prefix} 模型 {model_id} 配置逐字段组装完成")
-        return assembled
+        return (model_id, assembled)
 
-    # 尝试 default_model_id
+    # 尝试 default_model_id（修复 F4：返回回退后的真实 ID）
     if model_id != default_model_id:
         logger.warning(f"{log_prefix} 模型 {model_id} 配置不存在，尝试默认模型 {default_model_id}")
         fallback = config_getter(f"models.{default_model_id}", None)
         if isinstance(fallback, dict) and fallback.get("base_url"):
-            return fallback
+            logger.info(f"{log_prefix} 已回退到默认模型 {default_model_id}")
+            return (default_model_id, fallback)
 
     logger.warning(f"{log_prefix} 模型配置未找到: {model_id}")
-    return None
+    return (model_id, None)
 
 
 def merge_negative_prompt(

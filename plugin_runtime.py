@@ -15,51 +15,75 @@ class PluginRuntimeMixin:
 
     _auto_selfie_task: Any | None = None
     _auto_selfie_pending: bool = False
+    _auto_selfie_startup_task: asyncio.Task[Any] | None = None  # 延迟启动任务句柄
     _schedule_gen_task: asyncio.Task[Any] | None = None
     _schedule_pending: bool = False
+    _schedule_startup_task: asyncio.Task[Any] | None = None  # 延迟启动任务句柄
 
     def _initialize_runtime_state(self) -> None:
         """初始化后台任务运行时状态。"""
         self._auto_selfie_task = None
         self._auto_selfie_pending = False
+        self._auto_selfie_startup_task = None
         self._schedule_gen_task = None
         self._schedule_pending = False
+        self._schedule_startup_task = None
 
     @staticmethod
-    def _schedule_background_task(coro_func) -> bool:
-        """在事件循环已运行时创建后台任务，否则返回 False。"""
+    def _schedule_background_task(coro_func) -> asyncio.Task[Any] | None:
+        """在事件循环已运行时创建后台任务并返回句柄，否则返回 None。
+
+        Returns:
+            创建的 Task 对象，如果事件循环未就绪则返回 None
+        """
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return False
-        loop.create_task(coro_func())
-        return True
+            return None
+        return loop.create_task(coro_func())
 
     def _bootstrap_runtime_tasks(self) -> None:
-        """按配置启动后台任务，事件循环未就绪时改为懒启动。"""
+        """按配置启动后台任务，保存延迟任务句柄以便后续取消。
+
+        注意：此方法现在只在 ON_START 事件中调用，不在构造函数中调用。
+        """
         if self.get_config("auto_selfie.enabled", False):
             from .core.selfie import AutoSelfieTask
 
             self._auto_selfie_task = AutoSelfieTask(self)
-            if not self._schedule_background_task(self._start_auto_selfie_after_delay):
+            startup_task = self._schedule_background_task(self._start_auto_selfie_after_delay)
+            if startup_task:
+                self._auto_selfie_startup_task = startup_task
+            else:
                 self._auto_selfie_pending = True
                 logger.info("事件循环未就绪，自动自拍任务将在首次执行时懒启动")
 
-        if not self._schedule_background_task(self._start_schedule_gen_after_delay):
+        startup_task = self._schedule_background_task(self._start_schedule_gen_after_delay)
+        if startup_task:
+            self._schedule_startup_task = startup_task
+        else:
             self._schedule_pending = True
 
     async def _start_auto_selfie_after_delay(self):
         """延迟启动自动自拍任务。"""
         await asyncio.sleep(15)
         if self._auto_selfie_task:
-            await self._auto_selfie_task.start()
-            self._auto_selfie_pending = False
+            try:
+                await self._auto_selfie_task.start()
+                self._auto_selfie_pending = False
+            except Exception as exc:
+                logger.error("自动自拍任务启动失败: %s", exc, exc_info=True)
+                # 启动失败时保持 pending 标记，允许后续重试
+                self._auto_selfie_pending = True
+                raise
 
     def try_start_auto_selfie(self):
         """尝试懒启动自动自拍任务（供组件首次执行时调用）。"""
         if not self._auto_selfie_pending or not self._auto_selfie_task:
             return
-        if self._schedule_background_task(self._start_auto_selfie_after_delay):
+        startup_task = self._schedule_background_task(self._start_auto_selfie_after_delay)
+        if startup_task:
+            self._auto_selfie_startup_task = startup_task
             self._auto_selfie_pending = False
         else:
             logger.debug("自动自拍懒启动失败，等待下次重试: 事件循环未就绪")
@@ -68,7 +92,9 @@ class PluginRuntimeMixin:
         """尝试懒启动日程后台任务。"""
         if not self._schedule_pending:
             return
-        if self._schedule_background_task(self._start_schedule_gen_after_delay):
+        startup_task = self._schedule_background_task(self._start_schedule_gen_after_delay)
+        if startup_task:
+            self._schedule_startup_task = startup_task
             self._schedule_pending = False
         else:
             logger.debug("日程任务懒启动失败，等待下次重试: 事件循环未就绪")
@@ -116,12 +142,27 @@ class PluginRuntimeMixin:
                 await asyncio.sleep(300)
 
     async def on_plugin_unload(self) -> None:
-        """插件卸载时停止后台任务。"""
+        """插件卸载时停止后台任务。
+
+        注意：此方法现在通过 ON_STOP 事件处理器调用，不再依赖宿主直接调用。
+        """
         await self._stop_auto_selfie_task()
         await self._stop_schedule_gen_task()
 
     async def _stop_auto_selfie_task(self) -> None:
-        """停止自动自拍后台任务，避免重载后残留。"""
+        """停止自动自拍后台任务，包括延迟启动任务和运行中的任务。"""
+        # 先取消延迟启动任务
+        if self._auto_selfie_startup_task and not self._auto_selfie_startup_task.done():
+            self._auto_selfie_startup_task.cancel()
+            try:
+                await self._auto_selfie_startup_task
+            except asyncio.CancelledError:
+                pass
+            self._auto_selfie_startup_task = None
+            # 重置 pending 标记，避免重启后懒启动逻辑跳过
+            self._auto_selfie_pending = False
+
+        # 再停止运行中的自拍任务
         if not self._auto_selfie_task:
             self._auto_selfie_pending = False
             return
@@ -135,7 +176,19 @@ class PluginRuntimeMixin:
             self._auto_selfie_pending = False
 
     async def _stop_schedule_gen_task(self) -> None:
-        """停止日程后台任务。"""
+        """停止日程后台任务，包括延迟启动任务和运行中的任务。"""
+        # 先取消延迟启动任务
+        if self._schedule_startup_task and not self._schedule_startup_task.done():
+            self._schedule_startup_task.cancel()
+            try:
+                await self._schedule_startup_task
+            except asyncio.CancelledError:
+                pass
+            self._schedule_startup_task = None
+            # 重置 pending 标记，避免重启后懒启动逻辑跳过
+            self._schedule_pending = False
+
+        # 再取消日程生成循环任务
         if self._schedule_gen_task and not self._schedule_gen_task.done():
             self._schedule_gen_task.cancel()
             try:

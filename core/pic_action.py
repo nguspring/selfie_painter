@@ -31,6 +31,7 @@ from .utils import (
     normalize_selfie_style,
     get_selfie_style_display_name,
     is_chat_allowed_for_model,
+    extract_context_id_from_chat_stream,
 )
 
 logger = get_logger("selfie_painter")
@@ -259,10 +260,36 @@ class SelfiePainterAction(BaseAction):
             await self.send_text(f"模型 {model_id} 当前不可用")
             return False, f"模型 {model_id} 已禁用"
 
-        if not is_chat_allowed_for_model(self.get_config, self.chat_id, model_id):
-            logger.warning(f"{self.log_prefix} 模型 {model_id} 被聊天流访问规则拒绝: {self.chat_id}")
+        # 获取模型配置以提取实际模型名称（修复 F4：使用实际配置节 ID 进行权限检查）
+        actual_model_id, model_config = self._get_model_config(model_id)
+        if not model_config:
+            error_msg = f"指定的模型 '{model_id}' 不存在或配置无效，请检查配置文件。"
+            await self.send_text(error_msg)
+            logger.error(f"{self.log_prefix} 模型配置获取失败: {model_id}")
+            return False, "模型配置无效"
+
+        actual_model_name = model_config.get("model", "")
+
+        # 从 ChatStream 提取规范化的上下文 ID 用于访问控制检查
+        context_id = extract_context_id_from_chat_stream(self.chat_stream)
+        if not context_id:
+            # 提取失败时拒绝访问，不回退到不兼容的哈希格式
+            logger.error(f"{self.log_prefix} 无法从聊天流提取规范化上下文 ID，拒绝访问")
+            await self.send_text("无法验证聊天流权限，请联系管理员")
+            return False, "context_id 提取失败"
+
+        # 修复 F4：使用实际配置节 ID 进行权限检查（而非请求 ID）
+        if not is_chat_allowed_for_model(self.get_config, context_id, actual_model_id):
+            logger.warning(f"{self.log_prefix} 模型配置节 {actual_model_id} 被聊天流访问规则拒绝: {context_id}")
             await self.send_text(f"模型 {model_id} 当前聊天流不可用")
-            return False, f"模型 {model_id} 被访问规则拒绝"
+            return False, f"模型 {actual_model_id} 被访问规则拒绝"
+
+        if actual_model_name and not is_chat_allowed_for_model(self.get_config, context_id, actual_model_name):
+            logger.warning(
+                f"{self.log_prefix} 实际模型 {actual_model_name}（配置节 {actual_model_id}）被聊天流访问规则拒绝: {context_id}"
+            )
+            await self.send_text(f"模型 {model_id} 当前聊天流不可用")
+            return False, f"实际模型 {actual_model_name} 被访问规则拒绝"
 
         # 参数验证和后备提取
         if not description:
@@ -344,8 +371,7 @@ class SelfiePainterAction(BaseAction):
             reference_image = self._get_selfie_reference_image()
             if reference_image:
                 # 检查模型是否支持图生图
-                model_config = self._get_model_config(model_id)
-                if model_config and model_config.get("support_img2img", True):
+                if model_config.get("support_img2img", True):
                     logger.info(f"{self.log_prefix} 使用自拍参考图片进行图生图")
                     return await self._execute_unified_generation(
                         description,
@@ -354,6 +380,7 @@ class SelfiePainterAction(BaseAction):
                         strength or 0.6,
                         reference_image,
                         extra_negative_prompt=selfie_negative_prompt,
+                        model_config=model_config,
                     )
                 else:
                     logger.warning(f"{self.log_prefix} 模型 {model_id} 不支持图生图，自拍回退为文生图模式")
@@ -371,8 +398,7 @@ class SelfiePainterAction(BaseAction):
 
         if is_img2img_mode:
             # 检查指定模型是否支持图生图
-            model_config = self._get_model_config(model_id)
-            if model_config and not model_config.get("support_img2img", True):
+            if not model_config.get("support_img2img", True):
                 logger.warning(f"{self.log_prefix} 模型 {model_id} 不支持图生图，转为文生图模式")
                 await self.send_text(f"当前模型 {model_id} 不支持图生图功能，将为您生成新图片")
                 return await self._execute_unified_generation(
@@ -382,6 +408,7 @@ class SelfiePainterAction(BaseAction):
                     None,
                     None,
                     extra_negative_prompt=extra_neg,
+                    model_config=model_config,
                 )
 
             logger.info(f"{self.log_prefix} 检测到输入图片，使用图生图模式")
@@ -392,6 +419,7 @@ class SelfiePainterAction(BaseAction):
                 strength,
                 input_image_base64,
                 extra_negative_prompt=extra_neg,
+                model_config=model_config,
             )
         else:
             logger.info(f"{self.log_prefix} 未检测到输入图片，使用文生图模式")
@@ -402,6 +430,7 @@ class SelfiePainterAction(BaseAction):
                 None,
                 None,
                 extra_negative_prompt=extra_neg,
+                model_config=model_config,
             )
 
     async def _execute_unified_generation(
@@ -412,21 +441,24 @@ class SelfiePainterAction(BaseAction):
         strength: Optional[float] = None,
         input_image_base64: Optional[str] = None,
         extra_negative_prompt: Optional[str] = None,
+        model_config: Optional[Dict[str, Any]] = None,
     ) -> Tuple[bool, str]:
         """统一的图片生成执行方法
 
         Args:
             model_id: 模型ID，如 model1、model2
             extra_negative_prompt: 额外负面提示词（如自拍模式的手部质量负面提示词），会合并到模型配置的 negative_prompt_add
+            model_config: 预获取的模型配置（如果为 None，会重新获取）
         """
 
-        # 获取模型配置
-        model_config = self._get_model_config(model_id)
-        if not model_config:
-            error_msg = f"指定的模型 '{model_id}' 不存在或配置无效，请检查配置文件。"
-            await self.send_text(error_msg)
-            logger.error(f"{self.log_prefix} 模型配置获取失败: {model_id}")
-            return False, "模型配置无效"
+        # 获取模型配置（如果没有预获取）（修复 F4：解包返回的元组）
+        if model_config is None:
+            actual_model_id, model_config = self._get_model_config(model_id)
+            if not model_config:
+                error_msg = f"指定的模型 '{model_id}' 不存在或配置无效，请检查配置文件。"
+                await self.send_text(error_msg)
+                logger.error(f"{self.log_prefix} 模型配置获取失败: {model_id}")
+                return False, "模型配置无效"
 
         # 配置验证
         http_base_url = model_config.get("base_url")
@@ -476,7 +508,26 @@ class SelfiePainterAction(BaseAction):
 
         # 检查缓存
         is_img2img = input_image_base64 is not None
-        cached_result = self.cache_manager.get_cached_result(description, model_name, image_size, strength, is_img2img)
+        # 对于图生图，将 base64 解码为 bytes 用于计算缓存键哈希
+        input_image_bytes = None
+        if is_img2img and input_image_base64:
+            try:
+                # 移除可能的 base64 前缀，然后解码
+                clean_b64 = input_image_base64
+                for prefix in ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/jpg;base64,"]:
+                    if clean_b64.startswith(prefix):
+                        clean_b64 = clean_b64[len(prefix):]
+                        break
+                input_image_bytes = base64.b64decode(clean_b64)
+            except Exception as e:
+                # 图片解码失败时不应继续执行图生图流程
+                logger.error(f"{self.log_prefix} 输入图片解码失败，跳过图生图: {e}")
+                await self.send_text("输入图片格式错误，请重新上传")
+                return False, "图片解码失败"
+
+        cached_result = await self.cache_manager.get_cached_result(
+            description, model_name, image_size, strength, is_img2img, input_image_bytes
+        )
 
         if cached_result:
             logger.info(f"{self.log_prefix} 使用缓存的图片结果")
@@ -487,7 +538,9 @@ class SelfiePainterAction(BaseAction):
             if send_success:
                 return True, "图片已发送(缓存)"
             else:
-                self.cache_manager.remove_cached_result(description, model_name, image_size, strength, is_img2img)
+                await self.cache_manager.remove_cached_result(
+                    description, model_name, image_size, strength, is_img2img, input_image_bytes
+                )
 
         # 显示处理信息
         enable_debug = self.get_config("components.enable_debug_info", False)
@@ -533,8 +586,8 @@ class SelfiePainterAction(BaseAction):
                         mode_text = "图生图" if is_img2img else "文生图"
                         if enable_debug:
                             await self.send_text(f"{mode_text}完成！")
-                        self.cache_manager.cache_result(
-                            description, model_name, image_size, strength, is_img2img, resolved_data
+                        await self.cache_manager.cache_result(
+                            description, model_name, image_size, strength, is_img2img, resolved_data, input_image_bytes
                         )
                         await self._schedule_auto_recall_for_recent_message(model_config, model_id, send_timestamp)
                         return True, f"{mode_text}已成功生成并发送"
@@ -552,8 +605,12 @@ class SelfiePainterAction(BaseAction):
             await self.send_text(f"哎呀，{mode_text}时遇到问题：{result}")
             return False, f"{mode_text}失败: {result}"
 
-    def _get_model_config(self, model_id: str | None = None) -> Dict[str, Any]:
-        """获取指定模型的配置，支持热重载"""
+    def _get_model_config(self, model_id: str | None = None) -> tuple[str, Dict[str, Any]]:
+        """获取指定模型的配置，支持热重载（修复 F4：返回实际配置节 ID）
+
+        Returns:
+            (实际配置节ID, 配置字典)
+        """
         if not model_id:
             model_id_raw: object = self.get_config("generation.default_model", "model1")
             model_id = model_id_raw if isinstance(model_id_raw, str) and model_id_raw else "model1"
@@ -561,7 +618,8 @@ class SelfiePainterAction(BaseAction):
         default_model_id: str = (
             default_model_id_raw if isinstance(default_model_id_raw, str) and default_model_id_raw else "model1"
         )
-        return get_model_config(self.get_config, model_id, default_model_id, self.log_prefix) or {}
+        actual_id, config = get_model_config(self.get_config, model_id, default_model_id, self.log_prefix)
+        return (actual_id, config or {})
 
     def _download_and_encode_base64(self, image_url: str) -> Tuple[bool, str]:
         """下载图片并转换为base64（带代理支持）"""
@@ -839,8 +897,8 @@ class SelfiePainterAction(BaseAction):
             model_id_raw: object = self.get_config("generation.default_model", "model1")
             model_id = model_id_raw if isinstance(model_id_raw, str) and model_id_raw else "model1"
 
-        # 获取模型配置
-        model_config = self._get_model_config(model_id)
+        # 获取模型配置（修复 F4：解包返回的元组）
+        actual_model_id, model_config = self._get_model_config(model_id)
         if not model_config:
             logger.error(f"{self.log_prefix} [image_only] 模型配置获取失败: {model_id}")
             return False, f"模型 '{model_id}' 不存在或配置无效"

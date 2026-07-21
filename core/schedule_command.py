@@ -146,7 +146,11 @@ class ScheduleCommand(BaseCommand):
             await self.send_text("用法：/schedule inject on|off")
             return (True, None, True)
 
-        stream_id = getattr(self.message, "stream_id", None) or ""
+        # 从 chat_stream 中获取 stream_id（MessageRecv 本身没有 stream_id 字段）
+        stream_id = None
+        if hasattr(self.message, "chat_stream") and self.message.chat_stream:
+            stream_id = getattr(self.message.chat_stream, "stream_id", None)
+
         if not stream_id:
             await self.send_text("无法获取当前会话 ID")
             return (True, None, True)

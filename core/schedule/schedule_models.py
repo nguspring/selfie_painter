@@ -34,6 +34,7 @@ class ActivityInfo:
     activity_type: ActivityType
     description: str
     mood: str = "neutral"
+    outfit: str = ""  # 穿搭描述
     time_point: str = ""
 
 
@@ -107,5 +108,6 @@ def schedule_item_to_activity_info(item: ScheduleItem, current_time: str = ""):
         activity_type=activity_type,
         description=item.description,
         mood=item.mood,
+        outfit=item.outfit,
         time_point=current_time,
     )

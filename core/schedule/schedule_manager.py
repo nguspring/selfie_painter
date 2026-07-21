@@ -36,18 +36,20 @@ def get_schedule_manager() -> "ScheduleManager":
 
 
 class ScheduleManager:
-    """进程级日程管理器。"""
+    """进程级日程管理器。修复 F9：LLM 覆盖任务去重。"""
 
     def __init__(self):
         """初始化数据库。"""
         self._db: ScheduleDB = ScheduleDB()
+        # 修复 F9：保存 LLM 覆盖任务句柄，按日期去重
+        self._llm_override_tasks: dict[str, asyncio.Task] = {}
 
     async def ensure_db_initialized(self) -> None:
         """确保数据库 schema 已建立。"""
         await asyncio.to_thread(self._db.ensure_schema)
 
     async def ensure_today_schedule(self, plugin: Any | None = None) -> None:
-        """确保今日有日程，优先模板，再异步尝试 LLM 覆盖。"""
+        """确保今日有日程，优先模板，再异步尝试 LLM 覆盖（修复 F9：去重）。"""
         today = datetime.date.today().isoformat()
         items = await asyncio.to_thread(self._db.list_schedule_items, today)
 
@@ -62,7 +64,18 @@ class ScheduleManager:
             await asyncio.to_thread(self._db.set_state, "schedule_last_generated_source", "template")
 
         if plugin is not None:
-            _ = asyncio.create_task(self._try_llm_override(plugin, today))
+            # 修复 F9：检查是否已有该日期的 LLM 覆盖任务
+            if today in self._llm_override_tasks:
+                existing_task = self._llm_override_tasks[today]
+                if not existing_task.done():
+                    logger.debug(f"[ScheduleManager] LLM 覆盖任务已存在且未完成: {today}")
+                    return
+                # 任务已完成，移除旧句柄
+                del self._llm_override_tasks[today]
+
+            # 创建新任务并保存句柄
+            task = asyncio.create_task(self._try_llm_override(plugin, today))
+            self._llm_override_tasks[today] = task
 
     async def _try_llm_override(self, plugin: Any, target_date: str) -> None:
         """尝试使用 LLM 覆盖今日日程。"""

@@ -55,6 +55,48 @@ def build_target_context_id(target_id: object, scope: str) -> str:
     return normalize_context_id(f"qq:{normalized_target_id}:{scope}")
 
 
+def extract_context_id_from_chat_stream(chat_stream: object) -> str:
+    """从 ChatStream 对象提取规范化的上下文 ID。
+
+    Args:
+        chat_stream: ChatStream 对象，必须包含 platform、group_info 和 user_info 属性
+
+    Returns:
+        规范化的上下文 ID，格式为 "platform:id:scope"
+        如果无法提取则返回空字符串
+
+    Examples:
+        群聊：qq:114514:group
+        私聊：qq:1919810:private
+    """
+    if not chat_stream:
+        return ""
+
+    try:
+        # 提取平台信息
+        platform: str = getattr(chat_stream, "platform", "")
+        if not platform:
+            return ""
+
+        # 提取群组信息
+        group_info = getattr(chat_stream, "group_info", None)
+        if group_info:
+            group_id = getattr(group_info, "group_id", None)
+            if group_id:
+                return normalize_context_id(f"{platform}:{group_id}:group")
+
+        # 提取用户信息（私聊）
+        user_info = getattr(chat_stream, "user_info", None)
+        if user_info:
+            user_id = getattr(user_info, "user_id", None)
+            if user_id:
+                return normalize_context_id(f"{platform}:{user_id}:private")
+
+        return ""
+    except Exception:
+        return ""
+
+
 def is_context_allowed(mode: object, access_list: object, stream_id: str) -> bool:
     """根据黑白名单配置判断聊天流是否允许访问。"""
     normalized_mode: str = normalize_access_mode(mode)
