@@ -135,13 +135,14 @@ def _build_scene_llm_prompt(selfie_style: str) -> str:
 
 
 async def generate_scene_with_llm(
-    activity_info: ActivityInfo, selfie_style: str = "standard"
+    activity_info: ActivityInfo, selfie_style: str = "standard", model_id: str = "replyer"
 ) -> Optional[Dict[str, str]]:
     """使用 LLM 根据活动描述生成英文 SD 场景标签
 
     Args:
         activity_info: 活动信息
         selfie_style: 自拍风格，用于约束 LLM 生成的动作类型
+        model_id: 使用的 MaiBot LLM 模型名（如 planner / replyer），由调用方明确指定
 
     Returns:
         包含 action, environment, expression, lighting 的字典，失败返回 None
@@ -150,9 +151,10 @@ async def generate_scene_with_llm(
         from src.plugin_system.apis import llm_api
 
         models = llm_api.get_available_models()
-        model = models.get("replyer")
+        model = models.get(model_id)
         if not model:
-            logger.warning("未找到 replyer 模型，LLM 场景生成失败")
+            # 指定模型不存在时直接失败，禁止静默回退到其它模型（如把 planner 偷偷换成 replyer）
+            logger.error(f"未找到模型 {model_id}，LLM 场景生成失败")
             return None
 
         system_prompt = _build_scene_llm_prompt(selfie_style)
@@ -207,7 +209,9 @@ async def generate_scene_with_llm(
         return None
 
 
-async def generate_hand_action_with_llm(description: str, selfie_style: str = "standard") -> Optional[str]:
+async def generate_hand_action_with_llm(
+    description: str, selfie_style: str = "standard", model_id: str = "replyer"
+) -> Optional[str]:
     """使用与自动自拍同一套 LLM prompt 生成手部动作
 
     复用 _build_scene_llm_prompt（风格感知），将用户描述作为 Activity 输入，
@@ -218,6 +222,7 @@ async def generate_hand_action_with_llm(description: str, selfie_style: str = "s
     Args:
         description: 用户的场景描述
         selfie_style: 自拍风格，约束动作类型
+        model_id: 使用的 MaiBot LLM 模型名，调用方需明确语义（手动链路默认 replyer）
 
     Returns:
         英文手部动作标签字符串，失败返回 None
@@ -226,9 +231,10 @@ async def generate_hand_action_with_llm(description: str, selfie_style: str = "s
         from src.plugin_system.apis import llm_api
 
         models = llm_api.get_available_models()
-        model = models.get("replyer")
+        model = models.get(model_id)
         if not model:
-            logger.warning("未找到 replyer 模型，手部动作生成失败")
+            # 指定模型不存在时直接失败，禁止静默回退到其它模型
+            logger.error(f"未找到模型 {model_id}，手部动作生成失败")
             return None
 
         system_prompt = _build_scene_llm_prompt(selfie_style)
@@ -298,25 +304,31 @@ async def convert_to_selfie_prompt(
     selfie_style: str = "standard",
     bot_appearance: str = "",
     raw_mode: bool = False,
+    llm_model_id: str = "replyer",
 ) -> Optional[str]:
     """
     将活动信息转换为完整的自拍 SD 提示词（自动自拍专用）
 
     使用 LLM 根据活动描述生成场景标签，LLM 失败时返回 None。
 
+    本函数只负责构造「提示词优化器的输入基础描述」：
+    外观 + 结构化场景标签 + 自拍构图。最终采用 NAI / SD / 自然语言格式
+    由调用方通过 optimize_prompt(mode=...) 决定，这里不做格式裁决。
+
     Args:
         activity_info: 活动信息
         selfie_style: 自拍风格 ("standard"、"mirror" 或 "photo")
         bot_appearance: Bot 外观描述（从配置读取的 selfie.prompt_prefix）
         raw_mode: 裸模式，跳过固定场景词（selfie_scene），只保留外观、动作、环境等
+        llm_model_id: 场景构思使用的 MaiBot LLM 模型名（planner / replyer）
 
     Returns:
         完整的 SD 提示词，LLM 失败时返回 None
     """
-    # 使用 LLM 生成场景（传入风格以约束动作类型）
-    scene = await generate_scene_with_llm(activity_info, selfie_style)
+    # 使用 LLM 生成场景（传入风格以约束动作类型，并明确指定使用的 LLM 模型）
+    scene = await generate_scene_with_llm(activity_info, selfie_style, model_id=llm_model_id)
     if not scene:
-        logger.warning("LLM 场景生成失败，取消本次自拍提示词生成")
+        logger.warning(f"LLM 场景生成失败（模型 {llm_model_id}），取消本次自拍提示词生成")
         return None
 
     prompt_parts: List[str] = []

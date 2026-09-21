@@ -9,7 +9,7 @@ from src.plugin_system.base.component_types import ComponentInfo
 from .core.pic_action import SelfiePainterAction
 from .core.pic_command import PicConfigCommand, PicGenerationCommand, PicStyleCommand
 from .core.schedule_command import ScheduleCommand
-from .core.schedule_inject_handler import ScheduleInjectHandler
+from .core.schedule_inject_handler import ScheduleInjectHandler, ScheduleContextHandler
 from .core.wardrobe_command import WardrobeCommand
 from .core.lifecycle_handler import LifecycleStartHandler, LifecycleStopHandler
 
@@ -41,6 +41,7 @@ def build_plugin_components(plugin: Any) -> List[Tuple[ComponentInfo, Type[Any]]
 
     components.append((ScheduleCommand.get_command_info(), ScheduleCommand))
     if plugin.get_config("schedule_inject.enabled", True):
+        components.append((ScheduleContextHandler.get_handler_info(), ScheduleContextHandler))
         components.append((ScheduleInjectHandler.get_handler_info(), ScheduleInjectHandler))
 
     return components

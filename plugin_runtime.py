@@ -28,6 +28,7 @@ class PluginRuntimeMixin:
         self._schedule_gen_task = None
         self._schedule_pending = False
         self._schedule_startup_task = None
+        self._runtime_bootstrapped = False
 
     @staticmethod
     def _schedule_background_task(coro_func) -> asyncio.Task[Any] | None:
@@ -45,8 +46,14 @@ class PluginRuntimeMixin:
     def _bootstrap_runtime_tasks(self) -> None:
         """按配置启动后台任务，保存延迟任务句柄以便后续取消。
 
-        注意：此方法现在只在 ON_START 事件中调用，不在构造函数中调用。
+        由进程启动事件调用，不在构造函数中调用。
         """
+        # 避免重复启动事件再次创建相同循环。
+        if self._runtime_bootstrapped:
+            self.try_start_auto_selfie()
+            self.try_start_schedule_gen()
+            return
+        self._runtime_bootstrapped = True
         if self.get_config("auto_selfie.enabled", False):
             from .core.selfie import AutoSelfieTask
 
@@ -108,6 +115,7 @@ class PluginRuntimeMixin:
             mgr = get_schedule_manager()
             await mgr.ensure_db_initialized()
             await mgr.ensure_today_schedule(plugin=self)
+            self._schedule_pending = False
             if self.get_config("schedule.auto_generate_enabled", True):
                 self._schedule_gen_task = asyncio.create_task(self._schedule_gen_loop())
         except Exception as exc:
@@ -144,10 +152,14 @@ class PluginRuntimeMixin:
     async def on_plugin_unload(self) -> None:
         """插件卸载时停止后台任务。
 
-        注意：此方法现在通过 ON_STOP 事件处理器调用，不再依赖宿主直接调用。
+        由进程停止事件调用，可重复执行；当前宿主热卸载不会调用此方法。
         """
         await self._stop_auto_selfie_task()
         await self._stop_schedule_gen_task()
+        from .core.schedule.schedule_manager import get_schedule_manager
+
+        await get_schedule_manager().stop_override_tasks()
+        self._runtime_bootstrapped = False
 
     async def _stop_auto_selfie_task(self) -> None:
         """停止自动自拍后台任务，包括延迟启动任务和运行中的任务。"""

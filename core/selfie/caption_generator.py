@@ -3,7 +3,7 @@
 
 为自拍图片生成配文：
 - 基于当前活动/日程 + MaiBot 人设 + 表达风格自然生成
-- LLM 生成（使用 MaiBot 的 replyer 模型）
+- LLM 生成（模型由调用方指定，自动自拍链路读取 auto_selfie.prompt_model_id）
 - 生成失败返回空字符串，由调用方决定是否发布
 """
 
@@ -62,6 +62,7 @@ def _build_caption_prompt(activity_info: ActivityInfo, personality: str, reply_s
 
 async def generate_caption(
     activity_info: ActivityInfo,
+    model_id: str = "replyer",
 ) -> str:
     """
     为自拍生成配文
@@ -71,6 +72,7 @@ async def generate_caption(
 
     Args:
         activity_info: 当前活动信息
+        model_id: 使用的 MaiBot LLM 模型名（planner / replyer），由调用方明确指定
 
     Returns:
         配文文本，失败时返回空字符串
@@ -83,9 +85,10 @@ async def generate_caption(
         prompt = _build_caption_prompt(activity_info, personality, reply_style)
 
         models = llm_api.get_available_models()
-        model = models.get("replyer")
+        model = models.get(model_id)
         if not model:
-            logger.warning("未找到 replyer 模型，配文生成失败")
+            # 指定模型不存在时直接失败，禁止静默回退到另一个模型
+            logger.error(f"未找到模型 {model_id}，配文生成失败")
             return ""
 
         success, caption, _, _ = await llm_api.generate_with_model(

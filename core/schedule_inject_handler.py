@@ -37,6 +37,28 @@ _stream_throttle: Dict[str, float] = {}
 _stream_msg_count: Dict[str, int] = {}
 
 
+class ScheduleContextHandler(BaseEventHandler):
+    """在接收消息时记录用户上下文，供后续日程注入按会话查询。"""
+
+    event_type = EventType.ON_MESSAGE
+    handler_name = "selfie_schedule_context_handler"
+    handler_description = "记录日程对话上下文"
+    intercept_message = True
+
+    async def execute(self, message=None):
+        """按消息的流 ID 保存非命令文本，返回宿主约定的五元组。"""
+        if message is not None and message.stream_id and message.plain_text.strip():
+            # 命令不属于自然对话，避免配置操作污染日程话题识别。
+            if not message.plain_text.strip().startswith("/"):
+                cache = get_context_cache(
+                    stream_id=message.stream_id,
+                    max_turns=self.get_config("schedule_inject.schedule_context_cache_max_turns", 10),
+                    ttl_minutes=self.get_config("schedule_inject.schedule_context_cache_ttl_minutes", 30),
+                )
+                cache.add_turn(message.plain_text, "")
+        return True, True, None, None, message
+
+
 class ScheduleInjectHandler(BaseEventHandler):
     """
     日程注入 EventHandler（增强版）
@@ -89,7 +111,15 @@ class ScheduleInjectHandler(BaseEventHandler):
         # 1. 获取对话上下文缓存
         context_cache_ttl = self.get_config("schedule_inject.schedule_context_cache_ttl_minutes", 30)
         context_cache_max_turns = self.get_config("schedule_inject.schedule_context_cache_max_turns", 10)
-        context_cache = get_context_cache(max_turns=context_cache_max_turns, ttl_minutes=context_cache_ttl)
+        context_cache = get_context_cache(
+            stream_id=stream_id,
+            max_turns=context_cache_max_turns,
+            ttl_minutes=context_cache_ttl,
+        )
+        # 宿主仅提供提示词时，从同一会话的接收消息记录恢复用户文本。
+        recent_messages = context_cache.get_recent_messages(1)
+        if not plain_text and recent_messages:
+            plain_text = recent_messages[-1]
 
         # 2. 意图识别
         intent_enabled = self.get_config("schedule_inject.schedule_intent_enable", True)
@@ -124,7 +154,7 @@ class ScheduleInjectHandler(BaseEventHandler):
 
         # 5. 节流检查（smart 模式）
         mode = self.get_config("schedule_inject.mode", "smart")
-        if mode == "smart" and not self._should_inject_throttle(stream_id):
+        if mode == "smart" and not is_discussing_schedule and not self._should_inject_throttle(stream_id):
             # 增加消息计数
             _stream_msg_count[stream_id] = _stream_msg_count.get(stream_id, 0) + 1
             return (True, True, None, None, message)

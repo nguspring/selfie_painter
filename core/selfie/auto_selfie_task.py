@@ -3,10 +3,12 @@
 
 定时执行自拍流程：
 1. 从 ScheduleProvider 获取当前活动
-2. 用 SceneActionGenerator 生成自拍提示词
-3. 用 generate_image_standalone 生成图片
-4. 用 CaptionGenerator 生成配文
-5. 通过 Maizone QZone API 发布到QQ空间说说
+2. 用 auto_selfie.prompt_model_id 指定的 LLM 生成结构化场景/动作/表情/光线
+3. 拼装角色外观、活动场景与自拍构图，得到基础提示词
+4. 按实际图片模型的 optimizer_mode_override 调用统一提示词优化器
+5. 用 generate_image_standalone 生成图片
+6. 用 CaptionGenerator 生成配文（同样使用 prompt_model_id）
+7. 通过 Maizone QZone API 发布到QQ空间说说
 
 支持：
 - 可配置间隔（如每 2 小时）
@@ -19,7 +21,7 @@ import datetime
 from importlib import import_module
 import os
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from src.common.logger import get_logger  # pyright: ignore[reportMissingImports]
 
@@ -33,6 +35,8 @@ from ..utils import (
     get_selfie_style_display_name,
     build_target_context_id,
     is_chat_allowed_for_model,
+    optimize_prompt,
+    resolve_effective_prompt_optimizer_mode,
 )
 
 logger = get_logger("auto_selfie.task")
@@ -50,6 +54,72 @@ def _safe_bool(value: Any, default: bool) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return default
+
+
+# 自动自拍提示词模型允许值：只控制“谁负责构思场景与配文”，不决定最终图片模型
+_PROMPT_MODEL_CHOICES: tuple[str, ...] = ("planner", "replyer")
+
+
+def _resolve_prompt_model_id(get_config: Callable[..., Any]) -> str:
+    """读取并校验自动自拍提示词模型配置。
+
+    非法值必须立即抛错，绝不静默回退到 replyer：否则用户以为 planner 生效，
+    实际却用了别的模型，属于无法察觉的配置漂移。
+
+    Args:
+        get_config: 插件配置读取函数，签名 (key, default) -> Any
+
+    Returns:
+        校验通过的模型名，只会是 planner 或 replyer
+
+    Raises:
+        ValueError: 配置值不在允许集合内
+    """
+    raw = get_config("auto_selfie.prompt_model_id", "replyer")
+    model_id = str(raw).strip().lower() if raw is not None else ""
+    if model_id not in _PROMPT_MODEL_CHOICES:
+        raise ValueError(f"auto_selfie.prompt_model_id 配置非法: {raw!r}，仅支持 {_PROMPT_MODEL_CHOICES}")
+    return model_id
+
+
+async def _optimize_auto_selfie_prompt(
+    prompt: str,
+    get_config: Callable[..., Any],
+    actual_model_id: str,
+    enabled: bool = True,
+) -> tuple[str, str, bool]:
+    """按实际图片模型的 optimizer_mode_override 优化自动自拍提示词。
+
+    与手动画图链路共用 resolve_effective_prompt_optimizer_mode 与 optimize_prompt，
+    保证同一模型配置节在两条链路解析出完全一致的提示词格式。
+
+    Args:
+        prompt: 已拼装好的基础提示词（外观 + 场景 + 自拍构图）
+        get_config: 插件配置读取函数，签名 (key, default) -> Any
+        actual_model_id: 回退解析后的实际图片模型配置节 ID（如 model1）
+        enabled: 是否启用优化器，取自 prompt_optimizer.enabled
+
+    Returns:
+        (最终提示词, 解析出的优化模式, 是否真的被优化)
+        优化失败、返回空串或与原提示词完全相同时，返回原基础提示词且 optimized=False，
+        绝不把空字符串传给图片生成接口
+    """
+    optimizer_mode = resolve_effective_prompt_optimizer_mode(get_config, actual_model_id)
+    if not enabled:
+        return prompt, optimizer_mode, False
+
+    # 优化器失败时会降级返回原描述（success 仍为 True），因此用内容差异判断是否真的优化过
+    success, optimized_prompt = await optimize_prompt(
+        prompt,
+        "[AutoSelfie]",
+        mode=optimizer_mode,
+        custom_api_base_url=str(get_config("prompt_optimizer.custom_api_base_url", "")),
+        custom_api_key=str(get_config("prompt_optimizer.custom_api_key", "")),
+        custom_api_model=str(get_config("prompt_optimizer.custom_api_model", "")),
+    )
+    if success and optimized_prompt and optimized_prompt.strip() and optimized_prompt.strip() != prompt.strip():
+        return optimized_prompt, optimizer_mode, True
+    return prompt, optimizer_mode, False
 
 
 class AutoSelfieTask:
@@ -371,6 +441,8 @@ class AutoSelfieTask:
         logger.info(f"当前活动: {activity.description} ({activity.activity_type.value})")
 
         # 2. 生成自拍提示词
+        # 提示词模型与图片模型相互独立：前者决定“谁构思场景”，后者决定“谁生成图片”
+        prompt_model_id = _resolve_prompt_model_id(self.get_config)
         selfie_style = normalize_selfie_style(self.get_config("selfie.default_style", "standard"))
         bot_appearance = self.get_config("selfie.prompt_prefix", "")
         try:
@@ -411,9 +483,11 @@ class AutoSelfieTask:
         except Exception as exc:
             logger.warning("Wardrobe injection failed: %s", exc)
         raw_mode: bool = bool(self.get_config("selfie.raw_mode", False))
-        prompt = await convert_to_selfie_prompt(activity, selfie_style, bot_appearance, raw_mode=raw_mode)
+        prompt = await convert_to_selfie_prompt(
+            activity, selfie_style, bot_appearance, raw_mode=raw_mode, llm_model_id=prompt_model_id
+        )
         if not prompt:
-            logger.warning("LLM 自拍提示词生成失败，跳过本次自拍")
+            logger.warning(f"LLM 自拍提示词生成失败（提示词模型 {prompt_model_id}），跳过本次自拍")
             raise RuntimeError("自拍提示词生成失败")
 
         negative_prompt = get_negative_prompt_for_style(
@@ -423,7 +497,7 @@ class AutoSelfieTask:
         )
 
         logger.info(f"自动自拍风格: {get_selfie_style_display_name(selfie_style)}（{selfie_style}）")
-        logger.info(f"自拍提示词: {prompt[:100]}...")
+        logger.info(f"基础提示词: {prompt[:100]}...")
 
         # 3. 生成图片
         selfie_model = self.get_config("auto_selfie.selfie_model", "model1")
@@ -431,6 +505,21 @@ class AutoSelfieTask:
         if not model_config:
             logger.error(f"模型配置获取失败: {selfie_model}")
             raise RuntimeError(f"模型配置获取失败: {selfie_model}")
+
+        # 3a. 统一提示词优化：用实际图片模型配置节解析 optimizer_mode_override，
+        # 与手动画图链路走同一个 resolve + optimize 流程
+        optimizer_enabled = _safe_bool(self.get_config("prompt_optimizer.enabled", True), True)
+        prompt, optimizer_mode, optimized = await _optimize_auto_selfie_prompt(
+            prompt,
+            self.get_config,
+            actual_model_id,
+            enabled=optimizer_enabled,
+        )
+        # 只记录模型名与模式，不记录任何 API 密钥
+        logger.info(
+            f"[AutoSelfie] 提示词模型: {prompt_model_id}, 图片模型配置节: {actual_model_id}, "
+            f"优化模式: {optimizer_mode}, 已优化: {optimized}"
+        )
 
         # 透传代理配置
         extra_config = {}
@@ -469,10 +558,10 @@ class AutoSelfieTask:
 
         logger.info(f"自拍图片生成成功，数据长度: {len(image_data)}")
 
-        # 4. 生成配文
+        # 4. 生成配文（与场景构思使用同一个提示词模型）
         caption = ""
         if self.get_config("auto_selfie.caption_enabled", True):
-            caption = await generate_caption(activity)
+            caption = await generate_caption(activity, model_id=prompt_model_id)
             if not caption:
                 logger.warning("配文生成失败，跳过本次自拍发布")
                 raise RuntimeError("配文生成失败")
@@ -577,16 +666,20 @@ class AutoSelfieTask:
                     try:
                         group_stream_id = build_target_context_id(group_id, "group")
                         if group_stream_id and not is_chat_allowed_for_model(
-                            self.get_config, group_stream_id, selfie_model
+                            self.get_config, group_stream_id, actual_model_id
                         ):
-                            logger.info(f"[SelfiePainterV2] 群 {group_id} 被模型 {selfie_model} 的访问规则跳过")
+                            logger.info(f"[SelfiePainterV2] 群 {group_id} 被模型 {actual_model_id} 的访问规则跳过")
                             chat_send_count -= 1  # 跳过的不计入尝试数
                             continue
                         stream = chat_api.get_stream_by_group_id(str(group_id))
                         if stream:
-                            await send_api.image_to_stream(image_b64, stream.stream_id)
+                            image_sent = await send_api.image_to_stream(image_b64, stream.stream_id)
+                            if not image_sent:
+                                raise RuntimeError("图片发送接口返回失败")
                             if caption_enabled and caption:
-                                await send_api.text_to_stream(caption, stream.stream_id)
+                                caption_sent = await send_api.text_to_stream(caption, stream.stream_id)
+                                if not caption_sent:
+                                    logger.warning(f"[SelfiePainterV2] 群 {group_id} 配文发送失败")
                             logger.info(f"自拍已发送到群 {group_id}")
                             chat_success_count += 1
                             any_send_success = True
@@ -601,16 +694,20 @@ class AutoSelfieTask:
                     try:
                         user_stream_id = build_target_context_id(user_id, "private")
                         if user_stream_id and not is_chat_allowed_for_model(
-                            self.get_config, user_stream_id, selfie_model
+                            self.get_config, user_stream_id, actual_model_id
                         ):
-                            logger.info(f"[SelfiePainterV2] 用户 {user_id} 被模型 {selfie_model} 的访问规则跳过")
+                            logger.info(f"[SelfiePainterV2] 用户 {user_id} 被模型 {actual_model_id} 的访问规则跳过")
                             chat_send_count -= 1  # 跳过的不计入尝试数
                             continue
                         stream = chat_api.get_stream_by_user_id(str(user_id))
                         if stream:
-                            await send_api.image_to_stream(image_b64, stream.stream_id)
+                            image_sent = await send_api.image_to_stream(image_b64, stream.stream_id)
+                            if not image_sent:
+                                raise RuntimeError("图片发送接口返回失败")
                             if caption_enabled and caption:
-                                await send_api.text_to_stream(caption, stream.stream_id)
+                                caption_sent = await send_api.text_to_stream(caption, stream.stream_id)
+                                if not caption_sent:
+                                    logger.warning(f"[SelfiePainterV2] 用户 {user_id} 配文发送失败")
                             logger.info(f"自拍已发送到用户 {user_id}")
                             chat_success_count += 1
                             any_send_success = True

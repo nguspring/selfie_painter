@@ -453,7 +453,7 @@ CONFIG_SCHEMA = {
         "mode": ConfigField(
             type=str,
             default="sd",
-            description="手动画图链路使用的优化模式。nai=NAI标签流，sd=SD标签流，natural_language=自然英文短语。自动自拍链路不受这里影响",
+            description="全局优化模式，手动画图与自动自拍共用。nai=NAI标签流，sd=SD标签流，natural_language=自然英文短语。模型配置中的 optimizer_mode_override 可单独覆盖",
             label="全局优化模式",
             choices=["nai", "sd", "natural_language"],
             depends_on="prompt_optimizer.enabled",
@@ -771,6 +771,16 @@ CONFIG_SCHEMA = {
             depends_value=True,
             order=3,
         ),
+        "prompt_model_id": ConfigField(
+            type=str,
+            default="replyer",
+            description="自动自拍场景和配文使用的 MaiBot LLM 模型。planner=决策模型，replyer=首要回复模型。该模型只负责构思场景/动作/配文，最终图片由自拍模型生成",
+            label="自动自拍提示词模型",
+            choices=["planner", "replyer"],
+            depends_on="auto_selfie.enabled",
+            depends_value=True,
+            order=4,
+        ),
         "quiet_hours_start": ConfigField(
             type=str,
             default="00:00",
@@ -780,7 +790,7 @@ CONFIG_SCHEMA = {
             placeholder="00:00",
             depends_on="auto_selfie.enabled",
             depends_value=True,
-            order=4,
+            order=5,
         ),
         "quiet_hours_end": ConfigField(
             type=str,
@@ -790,7 +800,7 @@ CONFIG_SCHEMA = {
             placeholder="07:00",
             depends_on="auto_selfie.enabled",
             depends_value=True,
-            order=5,
+            order=6,
         ),
         "caption_enabled": ConfigField(
             type=bool,
@@ -799,21 +809,21 @@ CONFIG_SCHEMA = {
             label="生成配文",
             depends_on="auto_selfie.enabled",
             depends_value=True,
-            order=6,
+            order=7,
         ),
         "send_to_qzone": ConfigField(
             type=bool,
             default=False,
             description="是否将自动自拍发布到 QQ 空间说说。需要安装 Maizone 插件",
             label="发送到QQ空间",
-            order=7,
+            order=8,
         ),
         "send_to_chat": ConfigField(
             type=bool,
             default=False,
             description="是否将自动自拍发送到指定群聊和私聊",
             label="发送到群聊/私聊",
-            order=8,
+            order=9,
         ),
         "target_groups": ConfigField(
             type=list,
@@ -823,7 +833,7 @@ CONFIG_SCHEMA = {
             item_type="string",
             placeholder="123456789",
             hint="填群号，每行一个",
-            order=9,
+            order=10,
         ),
         "target_users": ConfigField(
             type=list,
@@ -833,7 +843,7 @@ CONFIG_SCHEMA = {
             item_type="string",
             placeholder="987654321",
             hint="填QQ号，每行一个",
-            order=10,
+            order=11,
         ),
         "persist_state": ConfigField(
             type=bool,
@@ -842,7 +852,7 @@ CONFIG_SCHEMA = {
             label="持久化自拍状态",
             depends_on="auto_selfie.enabled",
             depends_value=True,
-            order=11,
+            order=12,
         ),
     },
     "models": {},
@@ -993,7 +1003,7 @@ CONFIG_SCHEMA = {
         "optimizer_mode_override": ConfigField(
             type=str,
             default="natural_language",
-            description="该模型对手动画图优化模式的覆盖设置。follow_global=跟随全局；nai=强制 NAI 标签模式；sd=强制 SD 标签模式；natural_language=强制自然语言模式。仅影响手动链路，不影响自动自拍",
+            description="该模型对提示词优化模式的覆盖设置（手动与自动自拍共用）。follow_global=跟随全局；nai=强制 NAI 标签模式；sd=强制 SD 标签模式；natural_language=强制自然语言模式。手动画图与自动自拍链路均生效",
             label="优化模式覆盖",
             choices=["follow_global", "nai", "sd", "natural_language"],
             group="prompts",
@@ -1906,7 +1916,7 @@ for _model_section, _model_defaults in _DEFAULT_MODEL_VALUES.items():
             _model_fields["optimizer_mode_override"] = ConfigField(
                 type=str,
                 default=_model_defaults["optimizer_mode_override"],
-                description="该模型对手动画图优化模式的覆盖设置。follow_global=跟随全局；nai=强制 NAI 标签模式；sd=强制 SD 标签模式；natural_language=强制自然语言模式。仅影响手动链路，不影响自动自拍",
+                description="该模型对提示词优化模式的覆盖设置（手动与自动自拍共用）。follow_global=跟随全局；nai=强制 NAI 标签模式；sd=强制 SD 标签模式；natural_language=强制自然语言模式。手动画图与自动自拍链路均生效",
                 label="优化模式覆盖",
                 choices=["follow_global", "nai", "sd", "natural_language"],
                 group="prompts",
@@ -2077,7 +2087,7 @@ MODEL_FIELD_TEMPLATE: Dict[str, Any] = {
         "group": "prompts",
         "order": 16,
         "label": "优化模式覆盖",
-        "description": "该模型对手动画图优化模式的覆盖设置。follow_global=跟随全局；nai=强制 NAI 标签模式；sd=强制 SD 标签模式；natural_language=强制自然语言模式。仅影响手动链路，不影响自动自拍",
+        "description": "该模型对提示词优化模式的覆盖设置（手动与自动自拍共用）。follow_global=跟随全局；nai=强制 NAI 标签模式；sd=强制 SD 标签模式；natural_language=强制自然语言模式。手动画图与自动自拍链路均生效",
     },
     "auto_recall_delay": {
         "type": int,

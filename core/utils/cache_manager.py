@@ -217,7 +217,8 @@ class CacheManager:
         Returns:
             缓存键字符串
         """
-        return f"txt2img_{stream_id}|{description[:100]}|{model}|{size}"
+        description_hash = hashlib.sha256(description.encode("utf-8")).hexdigest()
+        return f"txt2img_{stream_id}|{description_hash}|{model}|{size}"
 
     @classmethod
     def _get_img2img_cache_key(
@@ -257,7 +258,8 @@ class CacheManager:
         else:
             image_hash = "no_input"
 
-        return f"img2img_{stream_id}|{description[:50]}|{model}|{size}|{strength_str}|{image_hash}"
+        description_hash = hashlib.sha256(description.encode("utf-8")).hexdigest()
+        return f"img2img_{stream_id}|{description_hash}|{model}|{size}|{strength_str}|{image_hash}"
 
     @classmethod
     def _cleanup_cache_dict(cls, cache_dict: Dict, max_size: int):

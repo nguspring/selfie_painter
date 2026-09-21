@@ -237,6 +237,12 @@ class PicGenerationCommand(PicCommandMixin):
             runtime_state.get_command_default_model(chat_id, global_command_model) if chat_id else global_command_model
         )
 
+        # 先解析实际模型，避免回退后使用未经检查的模型配置。
+        model_id, model_config = self._get_model_config(model_id)
+        if not model_config:
+            await self.send_text(f"模型 '{model_id}' 不存在")
+            return False, "模型配置不存在", True
+
         # 检查模型是否在当前聊天流启用
         if chat_id and not runtime_state.is_model_enabled(chat_id, model_id):
             await self.send_text(f"模型 {model_id} 当前不可用")
@@ -245,12 +251,6 @@ class PicGenerationCommand(PicCommandMixin):
         if chat_id and not is_chat_allowed_for_model(self.get_config, chat_id, model_id):
             await self.send_text(f"模型 {model_id} 当前聊天流不可用")
             return False, f"模型 {model_id} 被访问规则拒绝", True
-
-        # 获取模型配置
-        model_config = self._get_model_config(model_id)
-        if not model_config:
-            await self.send_text(f"模型 '{model_id}' 不存在")
-            return False, "模型配置不存在", True
 
         # 使用风格提示词作为描述
         final_description = style_prompt
@@ -364,11 +364,6 @@ class PicGenerationCommand(PicCommandMixin):
                 else global_command_model
             )
 
-        # 检查模型是否在当前聊天流启用
-        if chat_id and not runtime_state.is_model_enabled(chat_id, model_id):
-            await self.send_text(f"模型 {model_id} 当前不可用")
-            return False, f"模型 {model_id} 已禁用", True
-
         # 获取模型配置（修复 F4：使用实际配置节 ID 进行权限检查）
         actual_model_id, model_config = self._get_model_config(model_id)
         if not model_config:
@@ -376,6 +371,10 @@ class PicGenerationCommand(PicCommandMixin):
             return False, "模型配置不存在", True
 
         # 修复 F4：使用实际配置节 ID 进行权限检查
+        model_id = actual_model_id
+        if chat_id and not runtime_state.is_model_enabled(chat_id, model_id):
+            await self.send_text(f"模型 {model_id} 当前不可用")
+            return False, f"模型 {model_id} 已禁用", True
         if chat_id and not is_chat_allowed_for_model(self.get_config, chat_id, actual_model_id):
             await self.send_text(f"模型 {model_id} 当前聊天流不可用")
             return False, f"模型 {actual_model_id} 被访问规则拒绝", True

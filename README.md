@@ -62,6 +62,14 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 
 ## ⚠️ 已知问题
 
+### 本地质量修复（2026-09-20）
+
+- 修复风格命令模型配置解包、回退模型权限和运行状态键不一致。
+- 模板日程可继续被 LLM 覆盖；自动自拍仅在图片发送接口返回成功时计为成功。
+- 缓存使用完整提示词摘要；日程对话记录按聊天流隔离。
+- 进程正常启动和关闭时会通过已有的 `ON_START` / `ON_STOP` 事件管理后台任务；当前宿主的单插件热卸载流程不会调用插件清理方法，因此热重载残留任务仍属于宿主限制。
+- 隔离回归检查：`python plugins/selfie_painter_v2/tests/test_quality_regressions.py`。测试替换外部依赖，不代表在线服务联调通过。
+
 | 问题 | 状态 | 说明 |
 |------|------|------|
 | 与旧版 `selfie_painter` 同时启用时会出现组件注册冲突 | ⚠️ 需手动规避 | `selfie_painter_v2` 与旧版共存时，`draw_picture`、`pic_config_command`、`pic_style_command`、`pic_generation_command` 会因组件名重复而冲突。请停用或移除旧版 `selfie_painter` 后再测试本插件 |
@@ -85,7 +93,7 @@ git clone https://github.com/nguspring/selfie_painter.git -b dev
 ### 🎯 智能图片生成
 - **自动模式识别**：智能判断文生图或图生图模式
 - **自拍模式**：支持 standard（前置自拍）/ mirror（对镜自拍）/ photo（第三人称照片）三种风格
-- **提示词优化**：支持 NAI 标签、SD 标签和自然英文三种手动画图优化模式
+- **提示词优化**：手动与自动自拍共用 NAI 标签、SD 标签和自然英文三种最终提示词模式
 - **结果缓存**：默认关闭，按需开启后可复用相同参数的结果
 - **自动撤回**：可按模型配置延时撤回
 
@@ -432,11 +440,11 @@ custom_api_model = ""
 
 | 值 | 适用场景 | 行为 |
 |---|---|---|
-| `sd` | **默认，推荐给 SD / 标签流模型** | 在手动画图链路的最终阶段运行，对已经拼好的提示词做规范化：去重、排序、补全质量 tag、中文翻译，并保留自拍/衣柜/构图信息。 |
-| `natural_language` | 更适合偏自然语言理解的生图后端 | 同样只在手动画图链路的最终阶段运行，但会把最终提示词整理成更自然的英文短语，而不是偏 SD 的 tag 串。 |
+| `sd` | **默认，推荐给 SD / 标签流模型** | 在手动与自动自拍的最终阶段运行，对已经拼好的提示词做规范化，并保留场景、动作、光线和构图信息。 |
+| `natural_language` | 更适合偏自然语言理解的生图后端 | 在手动与自动自拍的最终阶段运行，把最终提示词整理成自然英文短语，而不是 SD 标签串。 |
 | `nai` | NovelAI 或兼容 NAI 标签权重的模型 | 输出平铺英文 tag，并使用 NAI 权重语法；不输出质量词或画师名。 |
 
-> ⚠️ **手动画图链路现在只使用最终阶段优化器**：不再读取旧版 `execution_timing`，也不再在手动链路里提前做一次 `before` 优化。这样 `/dr <style>`、衣柜翻译、自拍构图和角色参考图都能先完整拼装，再统一交给最终优化器收口。
+> ⚠️ **图片提示词统一在最终阶段优化**：手动链路与自动自拍都会先完整拼装外观、场景、动作和构图，再交给同一个最终优化器收口。
 
 #### 模型级覆盖 `optimizer_mode_override`
 
@@ -445,7 +453,7 @@ custom_api_model = ""
 optimizer_mode_override = "follow_global"  # follow_global / nai / sd / natural_language
 ```
 
-- `follow_global`：跟随 `[prompt_optimizer].mode`
+- `follow_global`：跟随 `[prompt_optimizer].mode`，手动与自动自拍均适用
 - `nai`：该模型强制使用 NAI 标签模式
 - `sd`：该模型强制使用 SD 标签模式
 - `natural_language`：该模型强制使用自然语言模式
@@ -453,6 +461,29 @@ optimizer_mode_override = "follow_global"  # follow_global / nai / sd / natural_
 解析顺序是：**模型覆盖优先，全局配置兜底**。
 
 > 💡 **自定义 API**：填写 `custom_api_base_url`、`custom_api_key`、`custom_api_model` 可使用独立 LLM 处理提示词优化，不占用 MaiBot 主 LLM 配额。留空则自动回退到主 LLM。
+
+### 自动自拍提示词模型与图片模型
+
+```toml
+[auto_selfie]
+enabled = false
+interval_minutes = 120
+selfie_model = "model1"             # 最终负责生图的图片模型配置节
+prompt_model_id = "replyer"         # 负责场景、动作和配文的 MaiBot LLM：planner / replyer
+quiet_hours_start = "00:00"
+quiet_hours_end = "07:00"
+caption_enabled = true
+
+[models.model1]
+optimizer_mode_override = "natural_language"  # follow_global / nai / sd / natural_language
+```
+
+- `schedule.model_id` 只控制日程 JSON 的生成模型。
+- `auto_selfie.prompt_model_id` 只控制自动自拍的场景/动作和配文模型，默认 `replyer`。
+- `auto_selfie.selfie_model` 决定最终调用哪个图片模型。
+- `models.<id>.optimizer_mode_override` 按实际图片模型配置节解析，自动自拍与手动画图共用。
+- 当 `optimizer_mode_override = "natural_language"` 时，发送给图片接口的是自然英文提示词，不会保留 `(tag:1.2)` 或 `n::tag::` 权重语法。
+
 ### 自动自拍配置
 
 ```toml
@@ -460,6 +491,7 @@ optimizer_mode_override = "follow_global"  # follow_global / nai / sd / natural_
 enabled = false
 interval_minutes = 120
 selfie_model = "model1"
+prompt_model_id = "replyer"
 quiet_hours_start = "00:00"
 quiet_hours_end = "07:00"
 caption_enabled = true

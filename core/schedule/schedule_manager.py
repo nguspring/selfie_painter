@@ -48,6 +48,14 @@ class ScheduleManager:
         """确保数据库 schema 已建立。"""
         await asyncio.to_thread(self._db.ensure_schema)
 
+    async def stop_override_tasks(self) -> None:
+        """取消并等待本管理器创建的 LLM 覆盖任务，卸载后不再写入日程。"""
+        tasks = list(self._llm_override_tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._llm_override_tasks.clear()
+
     async def ensure_today_schedule(self, plugin: Any | None = None) -> None:
         """确保今日有日程，优先模板，再异步尝试 LLM 覆盖（修复 F9：去重）。"""
         today = datetime.date.today().isoformat()
@@ -64,9 +72,10 @@ class ScheduleManager:
             await asyncio.to_thread(self._db.set_state, "schedule_last_generated_source", "template")
 
         if plugin is not None:
-            # 检查数据库中今天是否已经生成过日程（持久化检查，避免重启后重复生成）
+            # 模板可继续被 LLM 覆盖，仅成功的 LLM 日程阻止重复生成。
             last_generated_date = await asyncio.to_thread(self._db.get_state, "schedule_last_generated_date")
-            if last_generated_date == today:
+            last_generated_source = await asyncio.to_thread(self._db.get_state, "schedule_last_generated_source")
+            if last_generated_date == today and last_generated_source == "llm":
                 logger.debug(f"[ScheduleManager] 今日日程已生成过（{last_generated_date}），跳过 LLM 覆盖")
                 return
 

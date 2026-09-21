@@ -47,6 +47,13 @@ class SelfiePainterAction(BaseAction):
     mode_enable = ChatMode.ALL
     parallel_action = True
 
+    def _get_runtime_state_id(self) -> str:
+        """返回与命令组件一致的状态键；无法识别会话时明确报错。"""
+        context_id = extract_context_id_from_chat_stream(self.chat_stream)
+        if not context_id:
+            raise ValueError("无法获取运行状态的会话标识")
+        return context_id
+
     # 动作基本信息
     action_name = "draw_picture"
     action_description = (
@@ -222,7 +229,7 @@ class SelfiePainterAction(BaseAction):
 
         # 检查插件是否在当前聊天流启用
         global_enabled: bool = bool(self.get_config("plugin.enabled", True))
-        if not runtime_state.is_plugin_enabled(self.chat_id, global_enabled):
+        if not runtime_state.is_plugin_enabled(self._get_runtime_state_id(), global_enabled):
             logger.info(f"{self.log_prefix} 插件在当前聊天流已禁用")
             return False, "插件已禁用"
 
@@ -238,7 +245,7 @@ class SelfiePainterAction(BaseAction):
 
         # 自拍风格优先级：运行时命令设置 > LLM 指定 > 全局配置
         global_style = normalize_selfie_style(self.get_config("selfie.default_style", "standard"))
-        runtime_style = runtime_state.get_selfie_style(self.chat_id, None)
+        runtime_style = runtime_state.get_selfie_style(self._get_runtime_state_id(), None)
         if runtime_style is not None:
             selfie_style = normalize_selfie_style(runtime_style, global_style)
         elif selfie_style_llm:
@@ -252,13 +259,7 @@ class SelfiePainterAction(BaseAction):
             global_default: str = (
                 global_default_raw if isinstance(global_default_raw, str) and global_default_raw else "model1"
             )
-            model_id = runtime_state.get_action_default_model(self.chat_id, global_default)
-
-        # 检查模型是否在当前聊天流启用
-        if not runtime_state.is_model_enabled(self.chat_id, model_id):
-            logger.warning(f"{self.log_prefix} 模型 {model_id} 在当前聊天流已禁用")
-            await self.send_text(f"模型 {model_id} 当前不可用")
-            return False, f"模型 {model_id} 已禁用"
+            model_id = runtime_state.get_action_default_model(self._get_runtime_state_id(), global_default)
 
         # 获取模型配置以提取实际模型名称（修复 F4：使用实际配置节 ID 进行权限检查）
         actual_model_id, model_config = self._get_model_config(model_id)
@@ -268,6 +269,11 @@ class SelfiePainterAction(BaseAction):
             logger.error(f"{self.log_prefix} 模型配置获取失败: {model_id}")
             return False, "模型配置无效"
 
+        # 回退后的实际模型必须参与启用检查及后续提示词、撤回处理。
+        model_id = actual_model_id
+        if not runtime_state.is_model_enabled(self._get_runtime_state_id(), model_id):
+            await self.send_text(f"模型 {model_id} 当前不可用")
+            return False, f"模型 {model_id} 已禁用"
         actual_model_name = model_config.get("model", "")
 
         # 从 ChatStream 提取规范化的上下文 ID 用于访问控制检查
@@ -332,7 +338,7 @@ class SelfiePainterAction(BaseAction):
             # 尝试获取日程活动信息（增强场景上下文）
             activity_scene = None
             global_selfie_schedule: bool = bool(self.get_config("selfie.schedule_enabled", True))
-            selfie_schedule_on = runtime_state.is_selfie_schedule_enabled(self.chat_id, global_selfie_schedule)
+            selfie_schedule_on = runtime_state.is_selfie_schedule_enabled(self._get_runtime_state_id(), global_selfie_schedule)
             if selfie_schedule_on:
                 try:
                     from .selfie.schedule_provider import get_schedule_provider
@@ -862,11 +868,17 @@ class SelfiePainterAction(BaseAction):
         if delay_seconds <= 0:
             return
 
-        if model_id and not runtime_state.is_recall_enabled(self.chat_id, model_id, global_enabled):
+        if model_id and not runtime_state.is_recall_enabled(self._get_runtime_state_id(), model_id, global_enabled):
             logger.info(f"{self.log_prefix} 模型 {model_id} 撤回已在当前聊天流禁用")
             return
 
-        await schedule_auto_recall(self.chat_id, delay_seconds, self.log_prefix, self.send_command, send_timestamp)
+        await schedule_auto_recall(
+            self.chat_id,
+            delay_seconds,
+            self.log_prefix,
+            self.send_command,
+            send_timestamp,
+        )
 
     async def _generate_image_only(
         self,
